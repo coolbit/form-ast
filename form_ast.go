@@ -287,6 +287,78 @@ func Group(label string, children ...Node) *GroupNode {
 	return &GroupNode{Label: label, ChildrenNodes: children}
 }
 
+type PageNode struct {
+	Label         string
+	ChildrenNodes []Node
+}
+
+func (p *PageNode) String() string {
+	return fmt.Sprintf(`(PageNode) label="%s"`, p.Label)
+}
+func (p *PageNode) Children() []Node {
+	return p.ChildrenNodes
+}
+
+func (p *PageNode) Fields(form Form) (fields []string) {
+	if form == nil {
+		return []string{}
+	}
+
+	fields = []string{}
+	for _, c := range p.Children() {
+		fields = append(fields, c.Fields(form)...)
+	}
+	return
+}
+
+func (p *PageNode) AllFields() (fields []string) {
+	fields = []string{}
+	for _, c := range p.Children() {
+		fields = append(fields, c.AllFields()...)
+	}
+	return
+}
+
+func Page(label string, children ...Node) *PageNode {
+	return &PageNode{Label: label, ChildrenNodes: children}
+}
+
+type SectionNode struct {
+	Label         string
+	ChildrenNodes []Node
+}
+
+func (s *SectionNode) String() string {
+	return fmt.Sprintf(`(SectionNode) label="%s"`, s.Label)
+}
+func (s *SectionNode) Children() []Node {
+	return s.ChildrenNodes
+}
+
+func (s *SectionNode) Fields(form Form) (fields []string) {
+	if form == nil {
+		return []string{}
+	}
+
+	fields = []string{}
+	for _, c := range s.Children() {
+		fields = append(fields, c.Fields(form)...)
+	}
+	return
+}
+
+func (s *SectionNode) AllFields() (fields []string) {
+	fields = []string{}
+	for _, c := range s.Children() {
+		fields = append(fields, c.AllFields()...)
+	}
+	return
+}
+
+func Section(label string, children ...Node) *SectionNode {
+	return &SectionNode{Label: label, ChildrenNodes: children}
+}
+
 func ValidateNoCycles(root Node) error {
 	if root == nil {
 		return fmt.Errorf("root is nil")
