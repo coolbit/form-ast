@@ -293,7 +293,7 @@ type PageNode struct {
 }
 
 func (p *PageNode) String() string {
-	return fmt.Sprintf(`(PageNode) label="%s"`, p.Label)
+	return fmt.Sprintf(`(Page) label="%s"`, p.Label)
 }
 func (p *PageNode) Children() []Node {
 	return p.ChildrenNodes
@@ -329,7 +329,7 @@ type SectionNode struct {
 }
 
 func (s *SectionNode) String() string {
-	return fmt.Sprintf(`(SectionNode) label="%s"`, s.Label)
+	return fmt.Sprintf(`(Section) label="%s"`, s.Label)
 }
 func (s *SectionNode) Children() []Node {
 	return s.ChildrenNodes
