@@ -1,3 +1,3 @@
 module github.com/coolbit/form-ast
 
-go 1.24
+go 1.18

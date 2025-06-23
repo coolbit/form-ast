@@ -25,7 +25,9 @@ package main
 
 import (
   "fmt"
-  form_ast "github.com/coolbit/form-ast"
+  "os"
+
+  "github.com/coolbit/form-ast"
 )
 
 func main() {
@@ -36,29 +38,29 @@ func main() {
     // ... other form data ...
   }
 
-  root := form_ast.Group("Form A",
-	  form_ast.Step("dashboard",
-		  form_ast.Go.Text("username"),
-		  form_ast.Radio("mode",
-			  form_ast.Option("basic", form_ast.Text("modeSimpleFlag")),
-			  form_ast.Option("advanced", form_ast.Text("modeAdvFlag")),
+  root := ast.Group("Form A",
+    ast.Step("dashboard",
+      ast.Text("username"),
+      ast.Radio("mode",
+        ast.Option("basic", ast.Text("modeSimpleFlag")),
+        ast.Option("advanced", ast.Text("modeAdvFlag")),
       ),
       // ... more nodes ...
     ),
   )
 
-  ast, err := form_ast.NewAST(root)
+  formAst, err := ast.NewAST(root)
   if err != nil {
     panic(err)
   }
 
-  fmt.Println("All fields:", ast.AllFields())
-  fmt.Println("Selected fields:", ast.Selected(form))
+  fmt.Println("All fields:", formAst.AllFields())
+  fmt.Println("Selected fields:", formAst.Selected(form))
 
   // Print only selected branches
-  ast.Print(os.Stdout, form)
+  formAst.Print(os.Stdout, form)
   // Print entire tree
-  ast.Print(os.Stdout, nil)
+  formAst.Print(os.Stdout, nil)
 }
 ```
 
