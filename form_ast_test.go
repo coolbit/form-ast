@@ -921,3 +921,26 @@ func TestDeepArrowKeyValue(t *testing.T) {
 		t.Errorf("Selected(form) = %v, want %v", selected, wantSel)
 	}
 }
+
+func TestShortKey(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{"username", "username"},
+		{"user->name", "name"},
+		{"[user]->[profile]->age", "age"},
+		{"settings->mode", "mode"},
+		{"prefs->options->[0]", "0"},
+		{"multi->level->[deep]->leaf", "leaf"},
+		{"onlyBracket->[foo]", "foo"},
+		{"trailingBracket->bar]", "bar]"},
+		{"[unclosed", "[unclosed"},
+		{"", ""},
+	}
+
+	for _, c := range cases {
+		if got := ShortKey(c.in); got != c.want {
+			t.Errorf("ShortKey(%q) = %q; want %q", c.in, got, c.want)
+		}
+	}
+}
