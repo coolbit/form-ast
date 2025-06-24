@@ -506,12 +506,16 @@ func (p *TreePrinter) printAll(n Node, prefix string) error {
 
 func (p *TreePrinter) printChildren(n Node, prefix string) error {
 	children := n.Children()
-	total := countSelected(children, p.form)
-	printed := 0
-
+	total := 0
 	for _, c := range children {
-		sel := c.Fields(p.form)
-		if len(sel) == 0 {
+		if p.hasAnySelectedRec(c) {
+			total++
+		}
+	}
+
+	printed := 0
+	for _, c := range children {
+		if !p.hasAnySelectedRec(c) {
 			continue
 		}
 		printed++
@@ -539,14 +543,4 @@ func (p *TreePrinter) printChildren(n Node, prefix string) error {
 		}
 	}
 	return nil
-}
-
-func countSelected(nodes []Node, form Form) int {
-	cnt := 0
-	for _, c := range nodes {
-		if len(c.Fields(form)) > 0 {
-			cnt++
-		}
-	}
-	return cnt
 }

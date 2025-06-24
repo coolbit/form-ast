@@ -287,7 +287,7 @@ func TestMixedLargeAST_FieldsParallel(t *testing.T) {
 	}
 }
 
-func Usage() {
+func TestPrint(t *testing.T) {
 	form := Form{
 		"username":     "alice",
 		"mode":         "advanced",
@@ -332,7 +332,7 @@ func Usage() {
 			),
 		),
 		Step("profile",
-			Text("singleSelect"),
+			Text("level"),
 		),
 	)
 
