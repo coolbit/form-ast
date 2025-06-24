@@ -14,9 +14,10 @@ type Node interface {
 	Children() []Node
 	Fields(form Form) (fields []string)
 	AllFields() (fields []string)
+	KeyValue(form Form) (keyValue map[string]any)
 }
 
-type Form map[string]any
+type Form = map[string]any
 
 type TextNode struct {
 	FieldName string
@@ -559,7 +560,7 @@ type PathSegment struct {
 
 // splitArrowPath support the syntax: "[a]->[b]->0->c"
 func splitArrowPath(field string) []PathSegment {
-	rawParts := strings.Split(field, "->")
+	rawParts := strings.Split(field, SEPARATOR)
 	segs := make([]PathSegment, 0, len(rawParts))
 
 	for _, raw := range rawParts {
@@ -596,12 +597,6 @@ func GetValueByKeyPath(data any, path []PathSegment) (any, bool) {
 					return nil, false
 				}
 				cur = v
-			case map[string]any:
-				v, exists := m[seg.Key]
-				if !exists {
-					return nil, false
-				}
-				cur = v
 			default:
 				return nil, false
 			}
@@ -610,12 +605,6 @@ func GetValueByKeyPath(data any, path []PathSegment) (any, bool) {
 
 		switch m := cur.(type) {
 		case Form:
-			v, exists := m[seg.Key]
-			if !exists {
-				return nil, false
-			}
-			cur = v
-		case map[string]any:
 			v, exists := m[seg.Key]
 			if !exists {
 				return nil, false
@@ -633,3 +622,134 @@ func GetValueByKeyPath(data any, path []PathSegment) (any, bool) {
 	}
 	return cur, true
 }
+
+func (n *TextNode) KeyValue(form Form) map[string]any {
+	out := make(map[string]any)
+	if v, ok := GetValueByKeyPath(form, splitArrowPath(n.FieldName)); ok {
+		out[n.FieldName] = v
+	}
+	return out
+}
+
+func (o *OptionNode) KeyValue(form Form) map[string]any {
+	out := make(map[string]any)
+	for _, c := range o.Nodes {
+		for k, v := range c.KeyValue(form) {
+			out[k] = v
+		}
+	}
+	return out
+}
+
+func (n *RadioNode) KeyValue(form Form) map[string]any {
+	out := make(map[string]any)
+	raw, exists := GetValueByKeyPath(form, splitArrowPath(n.FieldName))
+	if !exists {
+		return out
+	}
+	if str, ok := raw.(string); ok {
+		out[n.FieldName] = str
+		for _, opt := range n.Options {
+			if opt.Value == str {
+				for k, v := range opt.KeyValue(form) {
+					out[k] = v
+				}
+				break
+			}
+		}
+	}
+	return out
+}
+
+func (n *CheckboxNode) KeyValue(form Form) map[string]any {
+	out := make(map[string]any)
+	raw, exists := GetValueByKeyPath(form, splitArrowPath(n.FieldName))
+	if !exists {
+		return out
+	}
+	if slice, ok := raw.([]string); ok {
+		out[n.FieldName] = slice
+		for _, sel := range slice {
+			for _, opt := range n.Options {
+				if opt.Value == sel {
+					for k, v := range opt.KeyValue(form) {
+						out[k] = v
+					}
+				}
+			}
+		}
+	}
+	return out
+}
+
+func (n *SelectNode) KeyValue(form Form) map[string]any {
+	out := make(map[string]any)
+	raw, exists := GetValueByKeyPath(form, splitArrowPath(n.FieldName))
+	if !exists {
+		return out
+	}
+	out[n.FieldName] = raw
+	switch sel := raw.(type) {
+	case string:
+		for _, opt := range n.Options {
+			if opt.Value == sel {
+				for k, v := range opt.KeyValue(form) {
+					out[k] = v
+				}
+				break
+			}
+		}
+	case []string:
+		for _, s := range sel {
+			for _, opt := range n.Options {
+				if opt.Value == s {
+					for k, v := range opt.KeyValue(form) {
+						out[k] = v
+					}
+				}
+			}
+		}
+	}
+	return out
+}
+
+func mergeChildKeyValues(children []Node, form Form) map[string]any {
+	out := make(map[string]any)
+	for _, c := range children {
+		for k, v := range c.KeyValue(form) {
+			out[k] = v
+		}
+	}
+	return out
+}
+
+func (n *StepNode) KeyValue(form Form) map[string]any {
+	return mergeChildKeyValues(n.Children(), form)
+}
+func (n *GroupNode) KeyValue(form Form) map[string]any {
+	return mergeChildKeyValues(n.Children(), form)
+}
+func (n *PageNode) KeyValue(form Form) map[string]any {
+	return mergeChildKeyValues(n.Children(), form)
+}
+func (n *SectionNode) KeyValue(form Form) map[string]any {
+	return mergeChildKeyValues(n.Children(), form)
+}
+
+func (a *AST) KeyValue(form Form) map[string]any {
+	return a.root.KeyValue(form)
+}
+
+func ShortKey(path string) string {
+	if path == "" {
+		return ""
+	}
+	parts := strings.Split(path, SEPARATOR)
+	last := parts[len(parts)-1]
+	if strings.HasPrefix(last, "[") && strings.HasSuffix(last, "]") {
+		return last[1 : len(last)-1]
+	}
+	return last
+}
+
+const SEPARATOR = "->"

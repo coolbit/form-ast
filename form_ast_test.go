@@ -519,3 +519,405 @@ func TestGetValueByKeyPath_Expressions(t *testing.T) {
 		})
 	}
 }
+
+func buildTestAST() Node {
+	return Group("root",
+		Text("username"),
+		Radio("mode",
+			Option("basic", Text("modeSimpleFlag")),
+			Option("advanced", Text("modeAdvFlag")),
+		),
+		Checkbox("features",
+			Option("f1", Text("feat1")),
+			Option("f2", Text("feat2")),
+			Option("f3", Text("feat3")),
+		),
+		Select("singleSelect",
+			Option("alpha", Text("selAlpha")),
+			Option("beta", Text("selBeta")),
+		),
+	)
+}
+
+func TestKeyValue(t *testing.T) {
+	astRoot := buildTestAST()
+
+	tests := []struct {
+		name     string
+		form     Form
+		expected map[string]any
+	}{
+		{
+			name:     "empty form",
+			form:     Form{},
+			expected: map[string]any{},
+		},
+		{
+			name: "only text",
+			form: Form{
+				"username": "alice",
+			},
+			expected: map[string]any{
+				"username": "alice",
+			},
+		},
+		{
+			name: "radio basic",
+			form: Form{
+				"mode":           "basic",
+				"modeSimpleFlag": "S",
+			},
+			expected: map[string]any{
+				"mode":           "basic",
+				"modeSimpleFlag": "S",
+			},
+		},
+		{
+			name: "radio advanced",
+			form: Form{
+				"mode":        "advanced",
+				"modeAdvFlag": "A",
+			},
+			expected: map[string]any{
+				"mode":        "advanced",
+				"modeAdvFlag": "A",
+			},
+		},
+		{
+			name: "checkbox single",
+			form: Form{
+				"features": []string{"f2"},
+				"feat2":    "2",
+			},
+			expected: map[string]any{
+				"features": []string{"f2"},
+				"feat2":    "2",
+			},
+		},
+		{
+			name: "checkbox multiple",
+			form: Form{
+				"features": []string{"f1", "f3"},
+				"feat1":    "1",
+				"feat3":    "3",
+			},
+			expected: map[string]any{
+				"features": []string{"f1", "f3"},
+				"feat1":    "1",
+				"feat3":    "3",
+			},
+		},
+		{
+			name: "select single",
+			form: Form{
+				"singleSelect": "beta",
+				"selBeta":      "B",
+			},
+			expected: map[string]any{
+				"singleSelect": "beta",
+				"selBeta":      "B",
+			},
+		},
+		{
+			name: "combined all",
+			form: Form{
+				"username":     "bob",
+				"mode":         "advanced",
+				"modeAdvFlag":  "ADV",
+				"features":     []string{"f1", "f2"},
+				"feat1":        "F1",
+				"feat2":        "F2",
+				"singleSelect": "alpha",
+				"selAlpha":     "A",
+			},
+			expected: map[string]any{
+				"username":     "bob",
+				"mode":         "advanced",
+				"modeAdvFlag":  "ADV",
+				"features":     []string{"f1", "f2"},
+				"feat1":        "F1",
+				"feat2":        "F2",
+				"singleSelect": "alpha",
+				"selAlpha":     "A",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := astRoot.KeyValue(tt.form)
+			if !reflect.DeepEqual(got, tt.expected) {
+				t.Errorf("KeyValue(%v) =\n  got: %#v\n want: %#v",
+					tt.form, got, tt.expected)
+			}
+		})
+	}
+}
+
+func buildNestedAST() Node {
+	return Page("rootPage",
+		Section("secA",
+			Group("groupA",
+				Step("step1",
+					Text("f1"),
+					Radio("r1",
+						Option("A", Text("r1A")),
+						Option("B", Text("r1B")),
+					),
+				),
+				Step("step2",
+					Checkbox("c1",
+						Option("X", Text("c1X")),
+						Option("Y", Text("c1Y")),
+					),
+				),
+			),
+			Group("groupB",
+				Select("s1",
+					Option("opt1", Text("s1_1")),
+					Option("opt2", Text("s1_2")),
+				),
+			),
+		),
+	)
+}
+
+func TestKeyValueNested(t *testing.T) {
+	astRoot := buildNestedAST()
+
+	tests := []struct {
+		name     string
+		form     Form
+		expected map[string]any
+	}{
+		{
+			name:     "empty form",
+			form:     Form{},
+			expected: map[string]any{},
+		},
+		{
+			name: "only f1",
+			form: Form{"f1": "v1"},
+			expected: map[string]any{
+				"f1": "v1",
+			},
+		},
+		{
+			name: "radio r1=B",
+			form: Form{
+				"r1":  "B",
+				"r1B": "rb",
+			},
+			expected: map[string]any{
+				"r1":  "B",
+				"r1B": "rb",
+			},
+		},
+		{
+			name: "checkbox c1=[X,Y]",
+			form: Form{
+				"c1":  []string{"X", "Y"},
+				"c1X": "cx",
+				"c1Y": "cy",
+			},
+			expected: map[string]any{
+				"c1":  []string{"X", "Y"},
+				"c1X": "cx",
+				"c1Y": "cy",
+			},
+		},
+		{
+			name: "select s1=opt2",
+			form: Form{
+				"s1":   "opt2",
+				"s1_2": "s2",
+			},
+			expected: map[string]any{
+				"s1":   "opt2",
+				"s1_2": "s2",
+			},
+		},
+		{
+			name: "nodes",
+			form: Form{
+				"f1":   "v1",
+				"r1":   "A",
+				"r1A":  "ra",
+				"c1":   []string{"Y"},
+				"c1Y":  "cy",
+				"s1":   "opt1",
+				"s1_1": "s1v",
+			},
+			expected: map[string]any{
+				"f1":   "v1",
+				"r1":   "A",
+				"r1A":  "ra",
+				"c1":   []string{"Y"},
+				"c1Y":  "cy",
+				"s1":   "opt1",
+				"s1_1": "s1v",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := astRoot.KeyValue(tt.form)
+			if !reflect.DeepEqual(got, tt.expected) {
+				t.Errorf("KeyValue(%v) =\n  got: %#v\n want: %#v",
+					tt.form, got, tt.expected)
+			}
+		})
+	}
+}
+
+func buildArrowAST() Node {
+	return Group("root",
+		Text("user->name"),
+		Text("[user]->[profile]->age"),
+		Radio("[settings]->theme",
+			Option("light", Text("settings->lightFlag")),
+			Option("dark", Text("settings->darkFlag")),
+		),
+		Checkbox("prefs->options",
+			Option("optA", Text("prefs->A")),
+			Option("optB", Text("prefs->B")),
+		),
+	)
+}
+
+func TestArrowPathKeyValue(t *testing.T) {
+	astRoot := buildArrowAST()
+
+	form := Form{
+		"user": Form{
+			"name": "alice",
+			"profile": Form{
+				"age": 30,
+			},
+		},
+		"settings": Form{
+			"theme":    "dark",
+			"darkFlag": "D",
+		},
+		"prefs": Form{
+			"options": []string{"optA", "optB"},
+			"A":       "VA",
+			"B":       "VB",
+		},
+	}
+
+	expected := map[string]any{
+		"user->name":             "alice",
+		"[user]->[profile]->age": 30,
+		"[settings]->theme":      "dark",
+		"settings->darkFlag":     "D",
+		"prefs->options":         []string{"optA", "optB"},
+		"prefs->A":               "VA",
+		"prefs->B":               "VB",
+	}
+
+	got := astRoot.KeyValue(form)
+	if !reflect.DeepEqual(got, expected) {
+		t.Errorf("KeyValue with arrow paths =\n got: %#v\nwant: %#v", got, expected)
+	}
+
+	ast, err := NewAST(astRoot)
+	if err != nil {
+		t.Fatalf("NewAST error: %v", err)
+	}
+	selected := ast.Selected(form)
+	wantSelected := []string{
+		"user->name",
+		"[user]->[profile]->age",
+		"[settings]->theme",
+		"settings->darkFlag",
+		"prefs->options",
+		"prefs->A",
+		"prefs->B",
+	}
+	if !reflect.DeepEqual(selected, wantSelected) {
+		t.Errorf("Selected(form) = %v, want %v", selected, wantSelected)
+	}
+}
+
+func buildDeepArrowAST() Node {
+	return Page("rootPage",
+		Section("sec1",
+			Group("group1",
+				Step("step1",
+					Text("user->id"),
+					Text("user->profile->email"),
+					Radio("settings->mode",
+						Option("on", Text("settings->onFlag")),
+						Option("off", Text("settings->offFlag")),
+					),
+				),
+				Group("group2",
+					Checkbox("prefs->[notifications]->types",
+						Option("email", Text("prefs->notifications->emailFlag")),
+						Option("sms", Text("prefs->notifications->smsFlag")),
+					),
+				),
+			),
+		),
+	)
+}
+
+func TestDeepArrowKeyValue(t *testing.T) {
+	astRoot := buildDeepArrowAST()
+
+	form := Form{
+		"user": Form{
+			"id": "u123",
+			"profile": Form{
+				"email": "a@example.com",
+			},
+		},
+		"settings": Form{
+			"mode":    "off",
+			"offFlag": true,
+		},
+		"prefs": Form{
+			"notifications": Form{
+				"types":     []string{"email", "sms"},
+				"emailFlag": "E_OK",
+				"smsFlag":   "S_OK",
+			},
+		},
+	}
+
+	expected := map[string]any{
+		"user->id":                        "u123",
+		"user->profile->email":            "a@example.com",
+		"settings->mode":                  "off",
+		"settings->offFlag":               true,
+		"prefs->[notifications]->types":   []string{"email", "sms"},
+		"prefs->notifications->emailFlag": "E_OK",
+		"prefs->notifications->smsFlag":   "S_OK",
+	}
+
+	got := astRoot.KeyValue(form)
+	if !reflect.DeepEqual(got, expected) {
+		t.Errorf("KeyValue(form) =\n got: %#v\nwant: %#v", got, expected)
+	}
+
+	ast, err := NewAST(astRoot)
+	if err != nil {
+		t.Fatalf("NewAST error: %v", err)
+	}
+	selected := ast.Selected(form)
+
+	wantSel := []string{
+		"user->id",
+		"user->profile->email",
+		"settings->mode",
+		"settings->offFlag",
+		"prefs->[notifications]->types",
+		"prefs->notifications->emailFlag",
+		"prefs->notifications->smsFlag",
+	}
+	if !reflect.DeepEqual(selected, wantSel) {
+		t.Errorf("Selected(form) = %v, want %v", selected, wantSel)
+	}
+}
