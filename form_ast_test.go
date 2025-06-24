@@ -150,6 +150,8 @@ func TestTreePrinterOutputOrder(t *testing.T) {
 	buf := &bytes.Buffer{}
 	ast.Print(buf, Form{"a": "1", "b": "2"})
 	out := buf.String()
+	fmt.Println(">>>>>>>")
+	fmt.Println(buf.String())
 	lines := strings.Split(strings.TrimSpace(out), "\n")
 	if len(lines) != 4 {
 		t.Fatalf("Expected 4 lines, got %d: %v", len(lines), lines)
@@ -347,4 +349,173 @@ func TestPrint(t *testing.T) {
 	ast.Print(os.Stdout, nil)
 	ast.Print(os.Stdout, form)
 
+}
+
+// TestSplitArrowPath verifies parsing of arrow-delimited paths into segments.
+func TestSplitArrowPath(t *testing.T) {
+	cases := []struct {
+		input string
+		want  []PathSegment
+	}{
+		{"Level", []PathSegment{{Key: "Level", IsIndex: false}}},
+		{"[Key1]", []PathSegment{{Key: "Key1", IsIndex: false}}},
+		{`a -> [b] -> 0 -> c`, []PathSegment{
+			{Key: "a", IsIndex: false},
+			{Key: "b", IsIndex: false},
+			{Key: "0", IsIndex: true},
+			{Key: "c", IsIndex: false},
+		}},
+	}
+
+	for _, c := range cases {
+		got := splitArrowPath(c.input)
+		if !reflect.DeepEqual(got, c.want) {
+			t.Errorf("splitArrowPath(%q) = %#v; want %#v", c.input, got, c.want)
+		}
+	}
+}
+
+// TestGetValueByKeyPath tests retrieval of values using arrow-split paths.
+func TestGetValueByKeyPath_MapSliceMix(t *testing.T) {
+	// Test map-only
+	formMap := map[string]any{"foo": "bar", "num": 42}
+	mapCases := []struct {
+		path   string
+		want   any
+		wantOk bool
+	}{
+		{"[foo]", "bar", true},
+		{"[num]", 42, true},
+		{"baz", nil, false},
+	}
+	for _, tc := range mapCases {
+		val, ok := GetValueByKeyPath(formMap, splitArrowPath(tc.path))
+		if ok != tc.wantOk || val != tc.want {
+			t.Errorf("GetValueByKeyPath(formMap, %q) = (%v, %v); want (%v, %v)", tc.path, val, ok, tc.want, tc.wantOk)
+		}
+	}
+
+	// Test slice-only
+	sliceData := []any{"zero", 1, map[string]any{"inner": "x"}}
+	sliceCases := []struct {
+		path   string
+		want   any
+		wantOk bool
+	}{
+		{"0", "zero", true},
+		{"1", 1, true},
+		{"2 -> inner", "x", true},
+		{"3", nil, false},
+	}
+	for _, tc := range sliceCases {
+		val, ok := GetValueByKeyPath(sliceData, splitArrowPath(tc.path))
+		if !reflect.DeepEqual(val, tc.want) || ok != tc.wantOk {
+			t.Errorf("GetValueByKeyPath(sliceData, %q) = (%#v, %v); want (%#v, %v)", tc.path, val, ok, tc.want, tc.wantOk)
+		}
+	}
+
+	// Test nested mix
+	form := map[string]any{
+		"users": []any{
+			map[string]any{"name": "alice"},
+			map[string]any{"name": "bob"},
+		},
+		"settings": map[string]any{"levels": []any{10, 20, 30}},
+	}
+	mixCases := []struct {
+		path   string
+		want   any
+		wantOk bool
+	}{
+		{"[users] -> 0 -> name", "alice", true},
+		{"settings -> [levels] -> 2", 30, true},
+		{"settings -> levels -> 3", nil, false},
+	}
+	for _, tc := range mixCases {
+		val, ok := GetValueByKeyPath(form, splitArrowPath(tc.path))
+		if !reflect.DeepEqual(val, tc.want) || ok != tc.wantOk {
+			t.Errorf("GetValueByKeyPath(form, %q) = (%#v, %v); want (%#v, %v)", tc.path, val, ok, tc.want, tc.wantOk)
+		}
+	}
+}
+
+func TestGetValueByKeyPath_Expressions(t *testing.T) {
+	sample := Form{
+		"flat":      "v0",
+		"user":      Form{"name": "alice", "age": 30},
+		"profile":   map[string]interface{}{"active": true},
+		"items":     []any{"zero", "one", Form{"sub": "deep"}},
+		"matrix":    []any{[]any{1, 2}, []any{3, 4}},
+		"mixed":     Form{"arr": []any{Form{"x": "X"}, Form{"x": "Y"}}, "ptr": Form{"p": "P"}},
+		"bracket":   Form{"a": Form{"b": "B"}},
+		"numkeys":   map[string]any{"123": "num", "456": 456, "789": 78.9},
+		"empty":     Form{},
+		"nilslice":  []any(nil),
+		"deepNest":  Form{"a": Form{"b": Form{"c": "CCC"}}},
+		"zeroValue": 0,
+	}
+
+	tests := []struct {
+		expr   string
+		want   any
+		wantOk bool
+	}{
+
+		{"flat", "v0", true},
+		{"[flat]", "v0", true},
+		{"missing", nil, false},
+		{"[missing]", nil, false},
+
+		{"user->name", "alice", true},
+		{"user->age", 30, true},
+		{"profile->active", true, true},
+		{"profile->missing", nil, false},
+
+		{"items->0", "zero", true},
+		{"items->1", "one", true},
+		{"items->2", Form{"sub": "deep"}, true},
+		{"items->3", nil, false},
+
+		{"items->2->sub", "deep", true},
+		{"items->2->missing", nil, false},
+
+		{"matrix->0->0", 1, true},
+		{"matrix->1->1", 4, true},
+		{"matrix->1->2", nil, false},
+
+		{"mixed->arr->0->x", "X", true},
+		{"mixed->arr->1->x", "Y", true},
+		{"mixed->ptr->p", "P", true},
+
+		{"[bracket]->[a]->[b]", "B", true},
+
+		{"numkeys->123", "num", true},
+		{"numkeys->\"123\"", nil, false},
+		{"numkeys->456", 456, true},
+		{"numkeys->789", 78.9, true},
+
+		{"empty->foo", nil, false},
+		{"nilslice->0", nil, false},
+
+		{"deepNest->a->b->c", "CCC", true},
+
+		{"zeroValue", 0, true},
+
+		{"", nil, false},
+		{"->flat", nil, false},
+		{"flat->", nil, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.expr, func(t *testing.T) {
+			path := splitArrowPath(tt.expr)
+			got, ok := GetValueByKeyPath(sample, path)
+			if ok != tt.wantOk {
+				t.Fatalf("expr %q: expected ok=%v, got %v", tt.expr, tt.wantOk, ok)
+			}
+			if ok && !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("expr %q: expected value=%#v, got %#v", tt.expr, tt.want, got)
+			}
+		})
+	}
 }

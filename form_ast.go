@@ -5,6 +5,8 @@ import (
 	"io"
 	"os"
 	"reflect"
+	"strconv"
+	"strings"
 )
 
 type Node interface {
@@ -26,7 +28,7 @@ func (n *TextNode) Fields(form Form) (fields []string) {
 	if form == nil {
 		return []string{}
 	}
-	if _, ok := form[n.FieldName]; ok {
+	if _, ok := GetValueByKeyPath(form, splitArrowPath(n.FieldName)); ok {
 		return []string{n.FieldName}
 	}
 	return []string{}
@@ -53,7 +55,7 @@ func (n *RadioNode) Fields(form Form) (fields []string) {
 		return []string{}
 	}
 
-	raw, exists := form[n.FieldName]
+	raw, exists := GetValueByKeyPath(form, splitArrowPath(n.FieldName))
 	str, ok := raw.(string)
 	if !exists || !ok {
 		return []string{}
@@ -104,7 +106,7 @@ func (n *CheckboxNode) Fields(form Form) (fields []string) {
 		return []string{}
 	}
 
-	v, exists := form[n.FieldName]
+	v, exists := GetValueByKeyPath(form, splitArrowPath(n.FieldName))
 	selected, ok := v.([]string)
 	if !exists || !ok {
 		return []string{}
@@ -147,7 +149,7 @@ func (n *SelectNode) Fields(form Form) (fields []string) {
 		return []string{}
 	}
 
-	val, exists := form[n.FieldName]
+	val, exists := GetValueByKeyPath(form, splitArrowPath(n.FieldName))
 	if !exists {
 		return []string{}
 	}
@@ -528,7 +530,7 @@ func (p *TreePrinter) printChildren(n Node, prefix string) error {
 		}
 
 		if tn, ok := c.(*TextNode); ok {
-			if val, exists := p.form[tn.FieldName]; exists {
+			if val, exists := GetValueByKeyPath(p.form, splitArrowPath(tn.FieldName)); exists {
 				if _, err := fmt.Fprintf(p.writer, "%s%s%s value=\"%v\"\n", prefix, branch, tn.String(), val); err != nil {
 					return err
 				}
@@ -543,4 +545,91 @@ func (p *TreePrinter) printChildren(n Node, prefix string) error {
 		}
 	}
 	return nil
+}
+
+type PathSegment struct {
+	Key     string
+	IsIndex bool
+}
+
+//	[{Key:"a",IsIndex:false},
+//	 {Key:"b",IsIndex:false},
+//	 {Key:"0",IsIndex:true},
+//	 {Key:"c",IsIndex:false}]
+
+// splitArrowPath support the syntax: "[a]->[b]->0->c"
+func splitArrowPath(field string) []PathSegment {
+	rawParts := strings.Split(field, "->")
+	segs := make([]PathSegment, 0, len(rawParts))
+
+	for _, raw := range rawParts {
+		p := strings.TrimSpace(raw)
+		if strings.HasPrefix(p, "[") && strings.HasSuffix(p, "]") {
+			p = p[1 : len(p)-1]
+			segs = append(segs, PathSegment{
+				Key:     p,
+				IsIndex: false,
+			})
+			continue
+		}
+
+		isIdx := false
+		if _, err := strconv.Atoi(p); err == nil {
+			isIdx = true
+		}
+		segs = append(segs, PathSegment{
+			Key:     p,
+			IsIndex: isIdx,
+		})
+	}
+	return segs
+}
+
+func GetValueByKeyPath(data any, path []PathSegment) (any, bool) {
+	cur := data
+	for _, seg := range path {
+		if !seg.IsIndex {
+			switch m := cur.(type) {
+			case Form:
+				v, exists := m[seg.Key]
+				if !exists {
+					return nil, false
+				}
+				cur = v
+			case map[string]any:
+				v, exists := m[seg.Key]
+				if !exists {
+					return nil, false
+				}
+				cur = v
+			default:
+				return nil, false
+			}
+			continue
+		}
+
+		switch m := cur.(type) {
+		case Form:
+			v, exists := m[seg.Key]
+			if !exists {
+				return nil, false
+			}
+			cur = v
+		case map[string]any:
+			v, exists := m[seg.Key]
+			if !exists {
+				return nil, false
+			}
+			cur = v
+		case []any:
+			idx, err := strconv.Atoi(seg.Key)
+			if err != nil || idx < 0 || idx >= len(m) {
+				return nil, false
+			}
+			cur = m[idx]
+		default:
+			return nil, false
+		}
+	}
+	return cur, true
 }
