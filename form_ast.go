@@ -19,79 +19,82 @@ type Node interface {
 
 type Form = map[string]any
 
-type TextNode struct {
-	FieldName string
-}
+type FieldNode struct{ FieldName string }
 
-func (n *TextNode) String() string   { return fmt.Sprintf(`(Text) name="%s"`, n.FieldName) }
-func (n *TextNode) Children() []Node { return []Node{} }
-func (n *TextNode) Fields(form Form) (fields []string) {
+func (f *FieldNode) String() string   { return fmt.Sprintf(`(Field) field="%s"`, f.FieldName) }
+func (f *FieldNode) Children() []Node { return []Node{} }
+func (f *FieldNode) Fields(form Form) (fields []string) {
 	if form == nil {
 		return []string{}
 	}
-	if _, ok := GetValueByKeyPath(form, splitArrowPath(n.FieldName)); ok {
-		return []string{n.FieldName}
+	if _, ok := GetValueByKeyPath(form, splitArrowPath(f.FieldName)); ok {
+		return []string{f.FieldName}
 	}
 	return []string{}
 }
+func (f *FieldNode) AllFields() []string { return []string{f.FieldName} }
+func (f *FieldNode) KeyValue(form Form) map[string]any {
+	out := make(map[string]any)
+	if v, ok := GetValueByKeyPath(form, splitArrowPath(f.FieldName)); ok {
+		out[f.FieldName] = v
+	}
+	return out
+}
+func Field(field string) *FieldNode { return &FieldNode{FieldName: field} }
 
-func (n *TextNode) AllFields() []string { return []string{n.FieldName} }
-
-type RadioNode struct {
+type ChoiceNode struct {
 	FieldName string
+	Multiple  bool
 	Options   []*OptionNode
 }
 
-func (n *RadioNode) String() string { return fmt.Sprintf(`(Radio) name="%s"`, n.FieldName) }
-func (n *RadioNode) Children() []Node {
+func (n *ChoiceNode) String() string {
+	return fmt.Sprintf(`(Choice) field="%s" multiple=%v`, n.FieldName, n.Multiple)
+}
+func (n *ChoiceNode) Children() []Node {
 	nodes := make([]Node, len(n.Options))
 	for i := range n.Options {
 		nodes[i] = n.Options[i]
 	}
 	return nodes
 }
-
-func (n *RadioNode) Fields(form Form) (fields []string) {
-	if form == nil {
-		return []string{}
-	}
-
-	raw, exists := GetValueByKeyPath(form, splitArrowPath(n.FieldName))
-	str, ok := raw.(string)
-	if !exists || !ok {
-		return []string{}
-	}
-
-	fields = []string{n.FieldName}
-	fields = append(fields, collectOptionFields(n.Options, func(opt *OptionNode) bool {
-		return opt.Value == str
-	}, form)...)
-
-	return fields
-}
-
-func (n *RadioNode) AllFields() (fields []string) {
+func (n *ChoiceNode) AllFields() (fields []string) {
 	fields = []string{n.FieldName}
 	for i := range n.Options {
 		fields = append(fields, n.Options[i].AllFields()...)
 	}
 	return fields
 }
-
-type CheckboxNode struct {
-	FieldName string
-	Options   []*OptionNode
-}
-
-func (n *CheckboxNode) String() string { return fmt.Sprintf(`(Checkbox) name="%s"`, n.FieldName) }
-func (n *CheckboxNode) Children() []Node {
-	nodes := make([]Node, len(n.Options))
-	for i := range n.Options {
-		nodes[i] = n.Options[i]
+func (n *ChoiceNode) Fields(form Form) []string {
+	if form == nil {
+		return []string{}
 	}
-	return nodes
-}
+	raw, exists := GetValueByKeyPath(form, splitArrowPath(n.FieldName))
+	if !exists {
+		return []string{}
+	}
 
+	fields := []string{n.FieldName}
+
+	if n.Multiple {
+		vals, ok := raw.([]string)
+		if !ok {
+			return fields
+		}
+		for _, v := range vals {
+			fields = append(fields, collectOptionFields(n.Options, func(opt *OptionNode) bool {
+				return opt.Value == v
+			}, form)...)
+		}
+	} else {
+		if v, ok := raw.(string); ok {
+			fields = append(fields, collectOptionFields(n.Options, func(opt *OptionNode) bool {
+				return opt.Value == v
+			}, form)...)
+		}
+	}
+	return fields
+}
 func collectOptionFields(opts []*OptionNode, match func(*OptionNode) bool, form Form) []string {
 	var out []string
 	for _, opt := range opts {
@@ -101,80 +104,44 @@ func collectOptionFields(opts []*OptionNode, match func(*OptionNode) bool, form 
 	}
 	return out
 }
-
-func (n *CheckboxNode) Fields(form Form) (fields []string) {
-	if form == nil {
-		return []string{}
-	}
-
-	v, exists := GetValueByKeyPath(form, splitArrowPath(n.FieldName))
-	selected, ok := v.([]string)
-	if !exists || !ok {
-		return []string{}
-	}
-
-	fields = []string{n.FieldName}
-	for _, str := range selected {
-		fields = append(fields, collectOptionFields(n.Options, func(opt *OptionNode) bool {
-			return opt.Value == str
-		}, form)...)
-	}
-
-	return fields
-}
-
-func (n *CheckboxNode) AllFields() (fields []string) {
-	fields = []string{n.FieldName}
-	for i := range n.Options {
-		fields = append(fields, n.Options[i].AllFields()...)
-	}
-	return fields
-}
-
-type SelectNode struct {
-	FieldName string
-	Options   []*OptionNode
-}
-
-func (n *SelectNode) String() string { return fmt.Sprintf(`(Select) name="%s"`, n.FieldName) }
-func (n *SelectNode) Children() []Node {
-	nodes := make([]Node, len(n.Options))
-	for i := range n.Options {
-		nodes[i] = n.Options[i]
-	}
-	return nodes
-}
-
-func (n *SelectNode) Fields(form Form) (fields []string) {
-	if form == nil {
-		return []string{}
-	}
-
-	val, exists := GetValueByKeyPath(form, splitArrowPath(n.FieldName))
+func (n *ChoiceNode) KeyValue(form Form) map[string]any {
+	out := make(map[string]any)
+	raw, exists := GetValueByKeyPath(form, splitArrowPath(n.FieldName))
 	if !exists {
-		return []string{}
+		return out
 	}
-	fields = []string{n.FieldName}
-	if slice, ok := val.([]string); ok {
-		for _, str := range slice {
-			fields = append(fields, collectOptionFields(n.Options, func(opt *OptionNode) bool {
-				return opt.Value == str
-			}, form)...)
-		}
-	} else if single, ok := val.(string); ok {
-		fields = append(fields, collectOptionFields(n.Options, func(opt *OptionNode) bool {
-			return opt.Value == single
-		}, form)...)
-	}
-	return fields
-}
+	out[n.FieldName] = raw
 
-func (n *SelectNode) AllFields() (fields []string) {
-	fields = []string{n.FieldName}
-	for i := range n.Options {
-		fields = append(fields, n.Options[i].AllFields()...)
+	if n.Multiple {
+		selections, ok := raw.([]string)
+		if !ok {
+			return out
+		}
+		for _, sel := range selections {
+			for _, opt := range n.Options {
+				if opt.Value == sel {
+					for k, v := range opt.KeyValue(form) {
+						out[k] = v
+					}
+				}
+			}
+		}
+	} else {
+		if sel, ok := raw.(string); ok {
+			for _, opt := range n.Options {
+				if opt.Value == sel {
+					for k, v := range opt.KeyValue(form) {
+						out[k] = v
+					}
+					break
+				}
+			}
+		}
 	}
-	return fields
+	return out
+}
+func Choice(field string, multiple bool, opts ...*OptionNode) *ChoiceNode {
+	return &ChoiceNode{FieldName: field, Multiple: multiple, Options: opts}
 }
 
 type OptionNode struct {
@@ -184,7 +151,6 @@ type OptionNode struct {
 
 func (o *OptionNode) String() string   { return fmt.Sprintf(`(Option) option="%v"`, o.Value) }
 func (o *OptionNode) Children() []Node { return o.Nodes }
-
 func (o *OptionNode) Fields(form Form) (fields []string) {
 	if form == nil {
 		return []string{}
@@ -196,7 +162,6 @@ func (o *OptionNode) Fields(form Form) (fields []string) {
 	}
 	return fields
 }
-
 func (o *OptionNode) AllFields() (fields []string) {
 	fields = []string{}
 	for _, c := range o.Nodes {
@@ -204,21 +169,15 @@ func (o *OptionNode) AllFields() (fields []string) {
 	}
 	return fields
 }
-
-func Text(field string) *TextNode { return &TextNode{FieldName: field} }
-
-func Radio(field string, opts ...*OptionNode) *RadioNode {
-	return &RadioNode{FieldName: field, Options: opts}
+func (o *OptionNode) KeyValue(form Form) map[string]any {
+	out := make(map[string]any)
+	for _, c := range o.Nodes {
+		for k, v := range c.KeyValue(form) {
+			out[k] = v
+		}
+	}
+	return out
 }
-
-func Checkbox(field string, opts ...*OptionNode) *CheckboxNode {
-	return &CheckboxNode{FieldName: field, Options: opts}
-}
-
-func Select(field string, opts ...*OptionNode) *SelectNode {
-	return &SelectNode{FieldName: field, Options: opts}
-}
-
 func Option(option string, children ...Node) *OptionNode {
 	return &OptionNode{Value: option, Nodes: children}
 }
@@ -228,12 +187,10 @@ type ContainerNode struct {
 	ChildrenNodes []Node
 }
 
-func (c *ContainerNode) String() string { return fmt.Sprintf(`(Container) label="%v"`, c.Label) }
-
+func (c *ContainerNode) String() string { return fmt.Sprintf(`(Container) name="%v"`, c.Label) }
 func (c *ContainerNode) Children() []Node {
 	return c.ChildrenNodes
 }
-
 func (c *ContainerNode) Fields(form Form) (fields []string) {
 	if form == nil {
 		return []string{}
@@ -245,7 +202,6 @@ func (c *ContainerNode) Fields(form Form) (fields []string) {
 	}
 	return
 }
-
 func (c *ContainerNode) AllFields() (fields []string) {
 	fields = []string{}
 	for _, child := range c.Children() {
@@ -253,11 +209,9 @@ func (c *ContainerNode) AllFields() (fields []string) {
 	}
 	return
 }
-
 func Container(label string, children ...Node) *ContainerNode {
 	return &ContainerNode{Label: label, ChildrenNodes: children}
 }
-
 func (c *ContainerNode) KeyValue(form Form) map[string]any {
 	return mergeChildKeyValues(c.Children(), form)
 }
@@ -430,7 +384,7 @@ func (p *TreePrinter) printChildren(n Node, prefix string) error {
 			next = prefix + "    "
 		}
 
-		if tn, ok := c.(*TextNode); ok {
+		if tn, ok := c.(*FieldNode); ok {
 			if val, exists := GetValueByKeyPath(p.form, splitArrowPath(tn.FieldName)); exists {
 				if _, err := fmt.Fprintf(p.writer, "%s%s%s value=\"%v\"\n", prefix, branch, tn.String(), val); err != nil {
 					return err
@@ -521,96 +475,6 @@ func GetValueByKeyPath(data any, path []PathSegment) (any, bool) {
 		}
 	}
 	return cur, true
-}
-
-func (n *TextNode) KeyValue(form Form) map[string]any {
-	out := make(map[string]any)
-	if v, ok := GetValueByKeyPath(form, splitArrowPath(n.FieldName)); ok {
-		out[n.FieldName] = v
-	}
-	return out
-}
-
-func (o *OptionNode) KeyValue(form Form) map[string]any {
-	out := make(map[string]any)
-	for _, c := range o.Nodes {
-		for k, v := range c.KeyValue(form) {
-			out[k] = v
-		}
-	}
-	return out
-}
-
-func (n *RadioNode) KeyValue(form Form) map[string]any {
-	out := make(map[string]any)
-	raw, exists := GetValueByKeyPath(form, splitArrowPath(n.FieldName))
-	if !exists {
-		return out
-	}
-	if str, ok := raw.(string); ok {
-		out[n.FieldName] = str
-		for _, opt := range n.Options {
-			if opt.Value == str {
-				for k, v := range opt.KeyValue(form) {
-					out[k] = v
-				}
-				break
-			}
-		}
-	}
-	return out
-}
-
-func (n *CheckboxNode) KeyValue(form Form) map[string]any {
-	out := make(map[string]any)
-	raw, exists := GetValueByKeyPath(form, splitArrowPath(n.FieldName))
-	if !exists {
-		return out
-	}
-	if slice, ok := raw.([]string); ok {
-		out[n.FieldName] = slice
-		for _, sel := range slice {
-			for _, opt := range n.Options {
-				if opt.Value == sel {
-					for k, v := range opt.KeyValue(form) {
-						out[k] = v
-					}
-				}
-			}
-		}
-	}
-	return out
-}
-
-func (n *SelectNode) KeyValue(form Form) map[string]any {
-	out := make(map[string]any)
-	raw, exists := GetValueByKeyPath(form, splitArrowPath(n.FieldName))
-	if !exists {
-		return out
-	}
-	out[n.FieldName] = raw
-	switch sel := raw.(type) {
-	case string:
-		for _, opt := range n.Options {
-			if opt.Value == sel {
-				for k, v := range opt.KeyValue(form) {
-					out[k] = v
-				}
-				break
-			}
-		}
-	case []string:
-		for _, s := range sel {
-			for _, opt := range n.Options {
-				if opt.Value == s {
-					for k, v := range opt.KeyValue(form) {
-						out[k] = v
-					}
-				}
-			}
-		}
-	}
-	return out
 }
 
 func mergeChildKeyValues(children []Node, form Form) map[string]any {
