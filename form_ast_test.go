@@ -21,8 +21,8 @@ func TestUnique(t *testing.T) {
 
 func TestValidateNoCycles(t *testing.T) {
 	// Serial test: building a cycle should error
-	step := Step("S")
-	group := Group("G", step)
+	step := Container("S")
+	group := Container("G", step)
 	step.ChildrenNodes = append(step.ChildrenNodes, group)
 	err := ValidateNoCycles(group)
 	if err == nil || !strings.Contains(err.Error(), "cycle detected") {
@@ -45,7 +45,7 @@ func TestAST_AllFieldsAndSelected(t *testing.T) {
 		Option("y", Text("fY")),
 	}
 	r := Radio("mode", radioOpts...)
-	root := Group("Root", Text("u"), r)
+	root := Container("Root", Text("u"), r)
 	ast, err := NewAST(root)
 	if err != nil {
 		t.Fatalf("NewAST error: %v", err)
@@ -68,7 +68,7 @@ func TestCheckboxFields(t *testing.T) {
 		Option("b", Text("fB")),
 		Option("c", Text("fC")),
 	)
-	root := Group("ChkRoot", chk)
+	root := Container("ChkRoot", chk)
 	ast, err := NewAST(root)
 	if err != nil {
 		t.Fatalf("NewAST error: %v", err)
@@ -91,7 +91,7 @@ func TestSelectFields(t *testing.T) {
 		Option("m", Text("fM2")),
 		Option("n", Text("fN2")),
 	)
-	root := Group("SelRoot", sel1, sel2)
+	root := Container("SelRoot", sel1, sel2)
 	ast, err := NewAST(root)
 	if err != nil {
 		t.Fatalf("NewAST error: %v", err)
@@ -104,11 +104,11 @@ func TestSelectFields(t *testing.T) {
 	}
 }
 
-func TestNestedSteps(t *testing.T) {
+func TestNestedContainers(t *testing.T) {
 	t.Parallel()
-	inner := Step("Inner", Text("fI"))
-	mid := Step("Mid", inner, Text("fM"))
-	outer := Step("Outer", mid, Text("fO"))
+	inner := Container("Inner", Text("fI"))
+	mid := Container("Mid", inner, Text("fM"))
+	outer := Container("Outer", mid, Text("fO"))
 	ast, err := NewAST(outer)
 	if err != nil {
 		t.Fatalf("NewAST error: %v", err)
@@ -126,7 +126,7 @@ func TestNestedSteps(t *testing.T) {
 }
 
 func TestPrintNoSelection(t *testing.T) {
-	root := Group("Empty", Text("fX"))
+	root := Container("Empty", Text("fX"))
 	ast, err := NewAST(root)
 	if err != nil {
 		t.Fatalf("NewAST error: %v", err)
@@ -142,24 +142,22 @@ func TestPrintNoSelection(t *testing.T) {
 }
 
 func TestTreePrinterOutputOrder(t *testing.T) {
-	root := Group("L1",
-		Group("L2", Text("a")),
+	root := Container("L1",
+		Container("L2", Text("a")),
 		Text("b"),
 	)
 	ast, _ := NewAST(root)
 	buf := &bytes.Buffer{}
 	ast.Print(buf, Form{"a": "1", "b": "2"})
 	out := buf.String()
-	fmt.Println(">>>>>>>")
-	fmt.Println(buf.String())
 	lines := strings.Split(strings.TrimSpace(out), "\n")
 	if len(lines) != 4 {
 		t.Fatalf("Expected 4 lines, got %d: %v", len(lines), lines)
 	}
-	if !strings.Contains(lines[0], "(Group) label=\"L1\"") {
+	if !strings.Contains(lines[0], "(Container) label=\"L1\"") {
 		t.Errorf("Line1 = %s", lines[0])
 	}
-	if !strings.Contains(lines[1], "(Group) label=\"L2\"") {
+	if !strings.Contains(lines[1], "(Container) label=\"L2\"") {
 		t.Errorf("Line2 = %s", lines[1])
 	}
 	if !strings.Contains(lines[2], "(Text) name=\"a\" value=\"1\"") {
@@ -179,9 +177,9 @@ func TestDeepNestedTreeParallel(t *testing.T) {
 		label := fmt.Sprintf("Step%d", i)
 		field := fmt.Sprintf("f%d", i)
 		if root == nil {
-			root = Step(label, Text(field))
+			root = Container(label, Text(field))
 		} else {
-			root = Step(label, root, Text(field))
+			root = Container(label, root, Text(field))
 		}
 	}
 	ast, err := NewAST(root)
@@ -202,8 +200,8 @@ func TestDeepNestedTreeParallel(t *testing.T) {
 	}
 }
 
-// Test a large mixed AST covering Text, Radio, Checkbox, Select, Step, Group in parallel
-// Test a large mixed AST covering Text, Radio, Checkbox, Select, Step, Group in parallel
+// Test a large mixed AST covering Text, Radio, Checkbox, Select, Container in parallel
+// Test a large mixed AST covering Text, Radio, Checkbox, Select, Container in parallel
 func TestMixedLargeAST_FieldsParallel(t *testing.T) {
 	t.Parallel()
 	// Build mixed nodes
@@ -212,7 +210,7 @@ func TestMixedLargeAST_FieldsParallel(t *testing.T) {
 		texts = append(texts, Text(fmt.Sprintf("T%d", i)))
 	}
 	// Build Grp1 manually to avoid slice expansion
-	grp1 := Group("Grp1")
+	grp1 := Container("Grp1")
 	for i := 0; i < 10; i++ {
 		grp1.ChildrenNodes = append(grp1.ChildrenNodes, texts[i])
 	}
@@ -230,9 +228,9 @@ func TestMixedLargeAST_FieldsParallel(t *testing.T) {
 		Option("alpha", Text("S1")),
 		Option("beta", Text("S2")),
 	)
-	step := Step("StepRoot", grp1, radio, checkbox, selectNode)
+	container := Container("ContainerRoot", grp1, radio, checkbox, selectNode)
 	// Build RootMixed manually
-	rootMixed := Group("RootMixed", step)
+	rootMixed := Container("RootMixed", container)
 	for i := 10; i < len(texts); i++ {
 		rootMixed.ChildrenNodes = append(rootMixed.ChildrenNodes, texts[i])
 	}
@@ -306,8 +304,8 @@ func TestPrint(t *testing.T) {
 		"opt3Only":     "opt3Only",
 	}
 
-	root := Group("Form A",
-		Step("dashboard",
+	root := Container("Form A",
+		Container("dashboard",
 			Text("username"),
 			Radio("mode",
 				Option("basic",
@@ -333,7 +331,7 @@ func TestPrint(t *testing.T) {
 				Option("o3", Text("opt3Only")),
 			),
 		),
-		Step("profile",
+		Container("profile",
 			Text("level"),
 		),
 	)
@@ -521,7 +519,7 @@ func TestGetValueByKeyPath_Expressions(t *testing.T) {
 }
 
 func buildTestAST() Node {
-	return Group("root",
+	return Container("root",
 		Text("username"),
 		Radio("mode",
 			Option("basic", Text("modeSimpleFlag")),
@@ -655,24 +653,24 @@ func TestKeyValue(t *testing.T) {
 }
 
 func buildNestedAST() Node {
-	return Page("rootPage",
-		Section("secA",
-			Group("groupA",
-				Step("step1",
+	return Container("rootPage",
+		Container("secA",
+			Container("groupA",
+				Container("step1",
 					Text("f1"),
 					Radio("r1",
 						Option("A", Text("r1A")),
 						Option("B", Text("r1B")),
 					),
 				),
-				Step("step2",
+				Container("step2",
 					Checkbox("c1",
 						Option("X", Text("c1X")),
 						Option("Y", Text("c1Y")),
 					),
 				),
 			),
-			Group("groupB",
+			Container("groupB",
 				Select("s1",
 					Option("opt1", Text("s1_1")),
 					Option("opt2", Text("s1_2")),
@@ -772,7 +770,7 @@ func TestKeyValueNested(t *testing.T) {
 }
 
 func buildArrowAST() Node {
-	return Group("root",
+	return Container("root",
 		Text("user->name"),
 		Text("[user]->[profile]->age"),
 		Radio("[settings]->theme",
@@ -842,10 +840,10 @@ func TestArrowPathKeyValue(t *testing.T) {
 }
 
 func buildDeepArrowAST() Node {
-	return Page("rootPage",
-		Section("sec1",
-			Group("group1",
-				Step("step1",
+	return Container("rootPage",
+		Container("sec1",
+			Container("group1",
+				Container("step1",
 					Text("user->id"),
 					Text("user->profile->email"),
 					Radio("settings->mode",
@@ -853,7 +851,7 @@ func buildDeepArrowAST() Node {
 						Option("off", Text("settings->offFlag")),
 					),
 				),
-				Group("group2",
+				Container("group2",
 					Checkbox("prefs->[notifications]->types",
 						Option("email", Text("prefs->notifications->emailFlag")),
 						Option("sms", Text("prefs->notifications->smsFlag")),

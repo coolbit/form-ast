@@ -177,33 +177,6 @@ func (n *SelectNode) AllFields() (fields []string) {
 	return fields
 }
 
-type StepNode struct {
-	Label         string
-	ChildrenNodes []Node
-}
-
-func (n *StepNode) String() string   { return fmt.Sprintf(`(Step) label="%s"`, n.Label) }
-func (n *StepNode) Children() []Node { return n.ChildrenNodes }
-func (n *StepNode) Fields(form Form) (fields []string) {
-	if form == nil {
-		return []string{}
-	}
-
-	fields = []string{}
-	for _, c := range n.Children() {
-		fields = append(fields, c.Fields(form)...)
-	}
-	return fields
-}
-
-func (n *StepNode) AllFields() (fields []string) {
-	fields = []string{}
-	for _, c := range n.Children() {
-		fields = append(fields, c.AllFields()...)
-	}
-	return fields
-}
-
 type OptionNode struct {
 	Value string
 	Nodes []Node
@@ -232,10 +205,6 @@ func (o *OptionNode) AllFields() (fields []string) {
 	return fields
 }
 
-func Step(name string, children ...Node) *StepNode {
-	return &StepNode{Label: name, ChildrenNodes: children}
-}
-
 func Text(field string) *TextNode { return &TextNode{FieldName: field} }
 
 func Radio(field string, opts ...*OptionNode) *RadioNode {
@@ -254,112 +223,43 @@ func Option(option string, children ...Node) *OptionNode {
 	return &OptionNode{Value: option, Nodes: children}
 }
 
-type GroupNode struct {
+type ContainerNode struct {
 	Label         string
 	ChildrenNodes []Node
 }
 
-func (g *GroupNode) String() string {
-	return fmt.Sprintf(`(Group) label="%s"`, g.Label)
-}
-func (g *GroupNode) Children() []Node {
-	return g.ChildrenNodes
+func (c *ContainerNode) String() string { return fmt.Sprintf(`(Container) label="%v"`, c.Label) }
+
+func (c *ContainerNode) Children() []Node {
+	return c.ChildrenNodes
 }
 
-func (g *GroupNode) Fields(form Form) (fields []string) {
+func (c *ContainerNode) Fields(form Form) (fields []string) {
 	if form == nil {
 		return []string{}
 	}
 
 	fields = []string{}
-	for _, c := range g.Children() {
-		fields = append(fields, c.Fields(form)...)
+	for _, child := range c.Children() {
+		fields = append(fields, child.Fields(form)...)
 	}
 	return
 }
 
-func (g *GroupNode) AllFields() (fields []string) {
+func (c *ContainerNode) AllFields() (fields []string) {
 	fields = []string{}
-	for _, c := range g.Children() {
-		fields = append(fields, c.AllFields()...)
+	for _, child := range c.Children() {
+		fields = append(fields, child.AllFields()...)
 	}
 	return
 }
 
-func Group(label string, children ...Node) *GroupNode {
-	return &GroupNode{Label: label, ChildrenNodes: children}
+func Container(label string, children ...Node) *ContainerNode {
+	return &ContainerNode{Label: label, ChildrenNodes: children}
 }
 
-type PageNode struct {
-	Label         string
-	ChildrenNodes []Node
-}
-
-func (p *PageNode) String() string {
-	return fmt.Sprintf(`(Page) label="%s"`, p.Label)
-}
-func (p *PageNode) Children() []Node {
-	return p.ChildrenNodes
-}
-
-func (p *PageNode) Fields(form Form) (fields []string) {
-	if form == nil {
-		return []string{}
-	}
-
-	fields = []string{}
-	for _, c := range p.Children() {
-		fields = append(fields, c.Fields(form)...)
-	}
-	return
-}
-
-func (p *PageNode) AllFields() (fields []string) {
-	fields = []string{}
-	for _, c := range p.Children() {
-		fields = append(fields, c.AllFields()...)
-	}
-	return
-}
-
-func Page(label string, children ...Node) *PageNode {
-	return &PageNode{Label: label, ChildrenNodes: children}
-}
-
-type SectionNode struct {
-	Label         string
-	ChildrenNodes []Node
-}
-
-func (s *SectionNode) String() string {
-	return fmt.Sprintf(`(Section) label="%s"`, s.Label)
-}
-func (s *SectionNode) Children() []Node {
-	return s.ChildrenNodes
-}
-
-func (s *SectionNode) Fields(form Form) (fields []string) {
-	if form == nil {
-		return []string{}
-	}
-
-	fields = []string{}
-	for _, c := range s.Children() {
-		fields = append(fields, c.Fields(form)...)
-	}
-	return
-}
-
-func (s *SectionNode) AllFields() (fields []string) {
-	fields = []string{}
-	for _, c := range s.Children() {
-		fields = append(fields, c.AllFields()...)
-	}
-	return
-}
-
-func Section(label string, children ...Node) *SectionNode {
-	return &SectionNode{Label: label, ChildrenNodes: children}
+func (c *ContainerNode) KeyValue(form Form) map[string]any {
+	return mergeChildKeyValues(c.Children(), form)
 }
 
 func ValidateNoCycles(root Node) error {
@@ -721,19 +621,6 @@ func mergeChildKeyValues(children []Node, form Form) map[string]any {
 		}
 	}
 	return out
-}
-
-func (n *StepNode) KeyValue(form Form) map[string]any {
-	return mergeChildKeyValues(n.Children(), form)
-}
-func (n *GroupNode) KeyValue(form Form) map[string]any {
-	return mergeChildKeyValues(n.Children(), form)
-}
-func (n *PageNode) KeyValue(form Form) map[string]any {
-	return mergeChildKeyValues(n.Children(), form)
-}
-func (n *SectionNode) KeyValue(form Form) map[string]any {
-	return mergeChildKeyValues(n.Children(), form)
 }
 
 func (a *AST) KeyValue(form Form) map[string]any {
