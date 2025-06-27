@@ -170,13 +170,7 @@ func (o *OptionNode) AllFields() (fields []string) {
 	return fields
 }
 func (o *OptionNode) KeyValue(form Form) map[string]any {
-	out := make(map[string]any)
-	for _, c := range o.Nodes {
-		for k, v := range c.KeyValue(form) {
-			out[k] = v
-		}
-	}
-	return out
+	return mergeChildKeyValues(o.Children(), form)
 }
 func Option(option string, children ...Node) *OptionNode {
 	return &OptionNode{Value: option, Nodes: children}
@@ -214,6 +208,16 @@ func Container(label string, children ...Node) *ContainerNode {
 }
 func (c *ContainerNode) KeyValue(form Form) map[string]any {
 	return mergeChildKeyValues(c.Children(), form)
+}
+
+func mergeChildKeyValues(children []Node, form Form) map[string]any {
+	out := make(map[string]any)
+	for _, c := range children {
+		for k, v := range c.KeyValue(form) {
+			out[k] = v
+		}
+	}
+	return out
 }
 
 func ValidateNoCycles(root Node) error {
@@ -288,6 +292,9 @@ func (a *AST) AllFields() []string {
 	copy(out, a.allFields)
 	return out
 }
+func (a *AST) KeyValue(form Form) map[string]any {
+	return a.root.KeyValue(form)
+}
 
 func unique(fields []string) []string {
 	seen := map[string]struct{}{}
@@ -299,6 +306,11 @@ func unique(fields []string) []string {
 		}
 	}
 	return out
+}
+
+type TreePrinter struct {
+	form   Form
+	writer io.Writer
 }
 
 func (p *TreePrinter) hasAnySelected(root Node) bool {
@@ -315,11 +327,6 @@ func (p *TreePrinter) hasAnySelectedRec(n Node) bool {
 		}
 	}
 	return false
-}
-
-type TreePrinter struct {
-	form   Form
-	writer io.Writer
 }
 
 func NewTreePrinter(w io.Writer, form Form) *TreePrinter {
@@ -402,40 +409,22 @@ func (p *TreePrinter) printChildren(n Node, prefix string) error {
 	return nil
 }
 
-type PathSegment struct {
+type PathSegment struct { // PathSegment [a]->[b]->0->c => [{Key:"a",IsIndex:false}, {Key:"b",IsIndex:false}, {Key:"0",IsIndex:true}, {Key:"c",IsIndex:false}]
 	Key     string
 	IsIndex bool
 }
 
-//	[{Key:"a",IsIndex:false},
-//	 {Key:"b",IsIndex:false},
-//	 {Key:"0",IsIndex:true},
-//	 {Key:"c",IsIndex:false}]
-
-// splitArrowPath support the syntax: "[a]->[b]->0->c"
-func splitArrowPath(field string) []PathSegment {
+func splitArrowPath(field string) []PathSegment { // splitArrowPath support the syntax: "[a]->[b]->0->c"
 	rawParts := strings.Split(field, SEPARATOR)
 	segs := make([]PathSegment, 0, len(rawParts))
-
 	for _, raw := range rawParts {
 		p := strings.TrimSpace(raw)
 		if strings.HasPrefix(p, "[") && strings.HasSuffix(p, "]") {
 			p = p[1 : len(p)-1]
-			segs = append(segs, PathSegment{
-				Key:     p,
-				IsIndex: false,
-			})
+			segs = append(segs, PathSegment{Key: p, IsIndex: false})
 			continue
 		}
-
-		isIdx := false
-		if _, err := strconv.Atoi(p); err == nil {
-			isIdx = true
-		}
-		segs = append(segs, PathSegment{
-			Key:     p,
-			IsIndex: isIdx,
-		})
+		segs = append(segs, PathSegment{Key: p, IsIndex: func(s string) bool { _, err := strconv.Atoi(s); return err == nil }(p)})
 	}
 	return segs
 }
@@ -475,20 +464,6 @@ func GetValueByKeyPath(data any, path []PathSegment) (any, bool) {
 		}
 	}
 	return cur, true
-}
-
-func mergeChildKeyValues(children []Node, form Form) map[string]any {
-	out := make(map[string]any)
-	for _, c := range children {
-		for k, v := range c.KeyValue(form) {
-			out[k] = v
-		}
-	}
-	return out
-}
-
-func (a *AST) KeyValue(form Form) map[string]any {
-	return a.root.KeyValue(form)
 }
 
 func ShortKey(path string) string {
