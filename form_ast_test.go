@@ -1,7 +1,6 @@
 package ast
 
 import (
-	"bytes"
 	"fmt"
 	"os"
 	"reflect"
@@ -122,49 +121,6 @@ func TestNestedContainers(t *testing.T) {
 	expSel := unique([]string{"fM", "fO"})
 	if !reflect.DeepEqual(sel, expSel) {
 		t.Errorf("Nested Selected = %v; want %v", sel, expSel)
-	}
-}
-
-func TestPrintNoSelection(t *testing.T) {
-	root := Container("Empty", Field("fX"))
-	ast, err := NewAST(root)
-	if err != nil {
-		t.Fatalf("NewAST error: %v", err)
-	}
-	buf := &bytes.Buffer{}
-	err = ast.Print(buf, Form{"other": "v"})
-	if err != nil {
-		t.Fatalf("Print error: %v", err)
-	}
-	if buf.Len() != 0 {
-		t.Errorf("Expected no output, got %q", buf.String())
-	}
-}
-
-func TestTreePrinterOutputOrder(t *testing.T) {
-	root := Container("L1",
-		Container("L2", Field("a")),
-		Field("b"),
-	)
-	ast, _ := NewAST(root)
-	buf := &bytes.Buffer{}
-	ast.Print(buf, Form{"a": "1", "b": "2"})
-	out := buf.String()
-	lines := strings.Split(strings.TrimSpace(out), "\n")
-	if len(lines) != 4 {
-		t.Fatalf("Expected 4 lines, got %d: %v", len(lines), lines)
-	}
-	if !strings.Contains(lines[0], "(Container) name=\"L1\"") {
-		t.Errorf("Line1 = %s", lines[0])
-	}
-	if !strings.Contains(lines[1], "(Container) name=\"L2\"") {
-		t.Errorf("Line2 = %s", lines[1])
-	}
-	if !strings.Contains(lines[2], "(Field) field=\"a\" value=\"1\"") {
-		t.Errorf("Line3 = %s", lines[2])
-	}
-	if !strings.Contains(lines[3], "(Field) field=\"b\" value=\"2\"") {
-		t.Errorf("Line4 = %s", lines[3])
 	}
 }
 
@@ -344,9 +300,7 @@ func TestPrint(t *testing.T) {
 	fmt.Println("All fields:", ast.AllFields())
 	fmt.Println("selected fields:", ast.Selected(form))
 
-	ast.Print(os.Stdout, nil)
-	ast.Print(os.Stdout, form)
-
+	ast.Print(os.Stdout)
 }
 
 // TestSplitArrowPath verifies parsing of arrow-delimited paths into segments.
