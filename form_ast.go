@@ -258,18 +258,18 @@ func GetValueByKeyPath(data any, path []PathSegment) (any, bool) {
 		}
 
 		switch m := cur.(type) {
-		case Form:
-			v, exists := m[seg.Key]
-			if !exists {
-				return nil, false
-			}
-			cur = v
 		case []any:
 			idx, err := strconv.Atoi(seg.Key)
 			if err != nil || idx < 0 || idx >= len(m) {
 				return nil, false
 			}
 			cur = m[idx]
+		case Form:
+			v, exists := m[seg.Key]
+			if !exists {
+				return nil, false
+			}
+			cur = v
 		default:
 			return nil, false
 		}
