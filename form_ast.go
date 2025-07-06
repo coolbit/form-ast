@@ -281,7 +281,7 @@ func ShortKey(path string) string {
 	if path == "" {
 		return ""
 	}
-	parts := strings.Split(path, SEPARATOR)
+	parts := strings.Split(strings.TrimSpace(path), SEPARATOR)
 	last := parts[len(parts)-1]
 	if strings.HasPrefix(last, "[") && strings.HasSuffix(last, "]") {
 		return last[1 : len(last)-1]
