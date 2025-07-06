@@ -896,3 +896,61 @@ func TestShortKey(t *testing.T) {
 		}
 	}
 }
+
+func TestChoiceNodeFieldsWithAnySlice(t *testing.T) {
+	choice := Choice("colors", true,
+		Option("red", Field("shade_red")),
+		Option("blue", Field("shade_blue")),
+	)
+
+	form := Form{
+		"colors":     []any{"red", 123, "blue"},
+		"shade_red":  "dark",
+		"shade_blue": "light",
+	}
+
+	fields := choice.Fields(form)
+	expected := []string{"colors", "shade_red", "shade_blue"}
+	found := make(map[string]bool)
+	for _, f := range fields {
+		found[f] = true
+	}
+
+	for _, name := range expected {
+		if !found[name] {
+			t.Errorf("Expected field %q in result, but missing; got fields: %v", name, fields)
+		}
+	}
+}
+
+func TestChoiceNodeKeyValueWithAnySlice(t *testing.T) {
+	choice := Choice("items", true,
+		Option("one", Field("val1")),
+		Option("two", Field("val2")),
+	)
+
+	form := Form{
+		"items": []any{"one", "two", nil, 3.14},
+		"val1":  100,
+		"val2":  200,
+	}
+
+	kv := choice.KeyValue(form)
+
+	raw, ok := kv["items"].([]any)
+	if !ok {
+		t.Fatalf("Expected kv[\"items\"] to be []any, got %T", kv["items"])
+	}
+
+	expRaw := []any{"one", "two", nil, 3.14}
+	if !reflect.DeepEqual(raw, expRaw) {
+		t.Errorf("Raw slice mismatch: got %v, want %v", raw, expRaw)
+	}
+
+	if v1, ok := kv["val1"]; !ok || v1 != 100 {
+		t.Errorf("Expected kv[\"val1\"]==100, got %v", kv["val1"])
+	}
+	if v2, ok := kv["val2"]; !ok || v2 != 200 {
+		t.Errorf("Expected kv[\"val2\"]==200, got %v", kv["val2"])
+	}
+}

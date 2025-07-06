@@ -78,9 +78,19 @@ func (n *ChoiceNode) Fields(form Form) []string {
 
 	if n.Multiple {
 		vals, ok := raw.([]string)
-		if !ok {
+		valsAny, okAny := raw.([]any)
+		if !(ok || okAny) {
 			return fields
 		}
+		if okAny {
+			vals = make([]string, 0, len(valsAny))
+			for i := range valsAny {
+				if str, ok1 := valsAny[i].(string); ok1 {
+					vals = append(vals, str)
+				}
+			}
+		}
+
 		for _, v := range vals {
 			fields = append(fields, collectOptionFields(n.Options, func(opt *OptionNode) bool {
 				return opt.Value == v
@@ -114,9 +124,19 @@ func (n *ChoiceNode) KeyValue(form Form) map[string]any {
 
 	if n.Multiple {
 		selections, ok := raw.([]string)
-		if !ok {
+		selectionsAny, okAny := raw.([]any)
+		if !(ok || okAny) {
 			return out
 		}
+		if okAny {
+			selections = make([]string, 0, len(selectionsAny))
+			for i := range selectionsAny {
+				if str, ok1 := selectionsAny[i].(string); ok1 {
+					selections = append(selections, str)
+				}
+			}
+		}
+
 		for _, sel := range selections {
 			for _, opt := range n.Options {
 				if opt.Value == sel {
