@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"reflect"
 	"strconv"
 	"strings"
 )
@@ -400,36 +399,25 @@ func unique(fields []string) []string {
 }
 
 func ValidateNoCycles(root Node) error {
-	if root == nil {
-		return fmt.Errorf("root is nil")
-	}
-
-	onPath := make(map[uintptr]bool)
-	visited := make(map[uintptr]bool)
+	onPath := make(map[Node]bool)
+	visited := make(map[Node]bool)
 
 	var dfs func(n Node) error
 	dfs = func(n Node) error {
-		v := reflect.ValueOf(n)
-		if v.Kind() != reflect.Ptr {
-			return fmt.Errorf("node %T is not a pointer", n)
-		}
-		ptr := v.Pointer()
-
-		if onPath[ptr] {
+		if onPath[n] {
 			return fmt.Errorf("cycle detected at node %s", n.String())
 		}
-		if visited[ptr] {
+		if visited[n] {
 			return nil
 		}
-
-		onPath[ptr] = true
+		onPath[n] = true
 		for _, c := range n.Children() {
 			if err := dfs(c); err != nil {
 				return err
 			}
 		}
-		onPath[ptr] = false
-		visited[ptr] = true
+		onPath[n] = false
+		visited[n] = true
 		return nil
 	}
 
