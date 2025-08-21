@@ -1,11 +1,13 @@
 package ast
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestUnique(t *testing.T) {
@@ -952,5 +954,372 @@ func TestChoiceNodeKeyValueWithAnySlice(t *testing.T) {
 	}
 	if v2, ok := kv["val2"]; !ok || v2 != 200 {
 		t.Errorf("Expected kv[\"val2\"]==200, got %v", kv["val2"])
+	}
+}
+
+func TestParseExpr_ArithmeticPrecedence(t *testing.T) {
+	cases := []struct {
+		expr string
+		want float64
+	}{
+		{"1 + 2 * 3", 7},
+		{"(1 + 2) * 3", 9},
+		{"10 / 2 + 3", 8},
+		{"10 / (2 + 3)", 2},
+		{"-5 + 2", -3},
+		{"-(5 + 2)", -7},
+	}
+	for _, c := range cases {
+		e, err := ParseExpr(c.expr)
+		if err != nil {
+			t.Fatalf("ParseExpr(%q) err=%v", c.expr, err)
+		}
+		v, err := e.Eval(Form{})
+		if err != nil {
+			t.Fatalf("Eval(%q) err=%v", c.expr, err)
+		}
+		got, _ := toFloat(v)
+		if got != c.want {
+			t.Errorf("Eval(%q) = %v, want %v", c.expr, got, c.want)
+		}
+	}
+}
+
+func TestParseExpr_LogicalAndCompare(t *testing.T) {
+	cases := []struct {
+		expr string
+		want bool
+	}{
+		{"1 < 2 && 3 > 1", true},
+		{"1 < 2 && 3 < 1", false},
+		{"1 == 1 || 2 == 3", true},
+		{"!(2 > 1)", false},
+		{"(2 > 1) && !(3 == 4)", true},
+	}
+	for _, c := range cases {
+		e, err := ParseExpr(c.expr)
+		if err != nil {
+			t.Fatalf("ParseExpr(%q) err=%v", c.expr, err)
+		}
+		got, err := EvalBool(e, Form{})
+		if err != nil {
+			t.Fatalf("EvalBool(%q) err=%v", c.expr, err)
+		}
+		if got != c.want {
+			t.Errorf("EvalBool(%q) = %v, want %v", c.expr, got, c.want)
+		}
+	}
+}
+
+func TestParseExpr_Functions(t *testing.T) {
+	e1, _ := ParseExpr(`int(3.7)`)
+	v1, _ := e1.Eval(Form{})
+	if f, _ := toFloat(v1); f != 3 {
+		t.Errorf("int(3.7) = %v, want 3", f)
+	}
+
+	e2, _ := ParseExpr(`float("2.5")`)
+	v2, _ := e2.Eval(Form{})
+	if f, _ := toFloat(v2); f != 2.5 {
+		t.Errorf(`float("2.5") = %v, want 2.5`, f)
+	}
+
+	e3, _ := ParseExpr(`years_since("2000-01-02")`)
+	v3, _ := e3.Eval(Form{})
+
+	if date := v3.(float64); date < 25 {
+		t.Errorf(`invalid years_since result: %v`, date)
+	}
+}
+
+func TestParseExpr_PathLookup(t *testing.T) {
+	form := Form{
+		"a": Form{
+			"b": []any{
+				Form{"c": 42},
+			},
+		},
+	}
+	e, err := ParseExpr(`[a]->[b]->0->[c]`)
+	if err != nil {
+		t.Fatalf("ParseExpr err=%v", err)
+	}
+	v, err := e.Eval(form)
+	if err != nil {
+		t.Fatalf("Eval err=%v", err)
+	}
+	if f, _ := toFloat(v); f != 42 {
+		t.Errorf("path eval = %v, want 42", f)
+	}
+
+	paths := e.CollectPaths()
+	if len(paths) != 1 || paths[0] != `[a]->[b]->0->[c]` {
+		t.Errorf("CollectPaths = %#v, want single path", paths)
+	}
+}
+
+func TestParseExpr_UnaryNotAndNegative(t *testing.T) {
+	e, _ := ParseExpr(`!false`)
+	b, _ := EvalBool(e, Form{})
+	if b != true {
+		t.Errorf("!false = %v, want true", b)
+	}
+	e2, _ := ParseExpr(`-5 + 2`)
+	v2, _ := e2.Eval(Form{})
+	if f, _ := toFloat(v2); f != -3 {
+		t.Errorf("-5 + 2 = %v, want -3", f)
+	}
+}
+
+func TestParseExpr_DivByZero(t *testing.T) {
+	e, _ := ParseExpr(`10 / 0`)
+	v, _ := e.Eval(Form{})
+	if f, _ := toFloat(v); f != 0 {
+		t.Errorf("10/0 = %v, want 0", f)
+	}
+}
+
+func TestParseExpr_NowAndYearIntegration(t *testing.T) {
+	form := Form{"step": Form{"A": "2023-01-01"}}
+	e, _ := ParseExpr(`years_since([step]->A) >= 1`)
+	ok, _ := EvalBool(e, form)
+	if !ok {
+		t.Errorf("condition should be true for 2023-01-01")
+	}
+}
+
+func sliceHasAll(got []string, want ...string) bool {
+	set := map[string]bool{}
+	for _, s := range got {
+		set[s] = true
+	}
+	for _, w := range want {
+		if !set[w] {
+			return false
+		}
+	}
+	return true
+}
+
+func TestIfNode_ThenElseSelection(t *testing.T) {
+	root := Container("Root",
+		If(`years_since([step]->[A]) >= 1`,
+			Container("Then", Field("[more]->[X]")),
+			Container("Else", Field("[more]->[Y]")),
+		),
+	)
+	astTree, err := NewAST(root)
+	if err != nil {
+		t.Fatalf("NewAST err=%v", err)
+	}
+
+	// True branch
+	formTrue := Form{
+		"step": Form{"A": "2024-08-10"},
+		"more": Form{"X": "then!", "Y": "else!"},
+	}
+	selTrue := astTree.Selected(formTrue)
+	if !sliceHasAll(selTrue, "[step]->[A]", "[more]->[X]") {
+		t.Errorf("Selected(true) = %#v, want include [step]->[A] and [more]->[X]", selTrue)
+	}
+	kvTrue := astTree.KeyValue(formTrue)
+	if v, ok := kvTrue["[more]->[X]"]; !ok || v != "then!" {
+		t.Errorf("KeyValue(true) = %#v, want X=then!", kvTrue)
+	}
+
+	// False branch
+	formFalse := Form{
+		"step": Form{"A": "2025-05-05"},
+		"more": Form{"X": "then!", "Y": "else!"},
+	}
+	selFalse := astTree.Selected(formFalse)
+	if !sliceHasAll(selFalse, "[step]->[A]", "[more]->[Y]") {
+		t.Errorf("Selected(false) = %#v, want include [step]->[A] and [more]->[Y]", selFalse)
+	}
+	kvFalse := astTree.KeyValue(formFalse)
+	if v, ok := kvFalse["[more]->[Y]"]; !ok || v != "else!" {
+		t.Errorf("KeyValue(false) = %#v, want Y=else!", kvFalse)
+	}
+}
+
+func TestIfNode_AllFieldsAndFieldsContainExprPaths(t *testing.T) {
+	root := Container("Root",
+		If(`now() - year([step]->[A]) > 1`,
+			Container("Then", Field("[more]->[X]")),
+			Container("Else", Field("[more]->[Y]")),
+		),
+	)
+	astTree, _ := NewAST(root)
+
+	all := astTree.AllFields()
+	wantAll := []string{"[step]->[A]", "[more]->[X]", "[more]->[Y]"}
+	for _, w := range wantAll {
+		found := false
+		for _, g := range all {
+			if g == w {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("AllFields missing %q, got %#v", w, all)
+		}
+	}
+
+	form := Form{"step": Form{}, "more": Form{"Y": "ok"}}
+	fields := astTree.Selected(form)
+	if !sliceHasAll(fields, "[step]->[A]", "[more]->[Y]") {
+		t.Errorf("Selected = %#v, want include expr path and selected branch field", fields)
+	}
+}
+
+func TestIfNode_WithChoiceIntegration(t *testing.T) {
+	root := Container("Root",
+		Choice("type", false,
+			Option("A",
+				Field("[step]->[A]"),
+				If(`years_since([step]->[A]) >= 1`,
+					Container("ThenA", Field("[more]->[X]")),
+					Container("ElseA", Field("[more]->[Y]")),
+				),
+			),
+			Option("B",
+				Field("[step]->[B]"),
+			),
+		),
+	)
+
+	astTree, _ := NewAST(root)
+	form := Form{
+		"type": "A",
+		"step": Form{"A": "2024-08-20"},
+		"more": Form{"X": "hitX", "Y": "hitY"},
+	}
+	sel := astTree.Selected(form)
+	if !sliceHasAll(sel, "type", "[step]->[A]", "[more]->[X]") {
+		t.Errorf("Selected = %#v, want include type, [step]->[A], [more]->[X]", sel)
+	}
+	kv := astTree.KeyValue(form)
+	if kv["type"] != "A" || kv["[more]->[X]"] != "hitX" {
+		t.Errorf("KeyValue = %#v, want type=A and [more]->X=hitX", kv)
+	}
+}
+
+func TestGetValueByKeyPath_IndexAndMap(t *testing.T) {
+	form := Form{
+		"arr": []any{
+			Form{"k": "v0"},
+			Form{"k": "v1"},
+		},
+		"map": Form{"0": "zero", "k": "val"},
+	}
+	if v, ok := GetValueByKeyPath(form, splitArrowPath("arr->1->k")); !ok || v != "v1" {
+		t.Errorf("GetValueByKeyPath arr->1->k = %v,%v want v1,true", v, ok)
+	}
+	if v, ok := GetValueByKeyPath(form, splitArrowPath("map->0")); !ok || v != "zero" {
+		t.Errorf("GetValueByKeyPath map->0 = %v,%v want zero,true", v, ok)
+	}
+}
+
+func TestShortKey1(t *testing.T) {
+	if got := ShortKey("[a]->[b]->0->c"); got != "c" {
+		t.Errorf("ShortKey = %q, want c", got)
+	}
+	if got := ShortKey("[x]"); got != "x" {
+		t.Errorf("ShortKey = %q, want x", got)
+	}
+	if got := ShortKey("  foo  "); got != "foo" {
+		t.Errorf("ShortKey = %q, want foo", got)
+	}
+}
+
+func TestValidateNoCycles1(t *testing.T) {
+	c := &ContainerNode{Label: "Loop"}
+	c.ChildrenNodes = []Node{c}
+	if err := ValidateNoCycles(c); err == nil {
+		t.Errorf("ValidateNoCycles should detect cycle")
+	}
+
+	ok := Container("Root", Field("a"), Field("b"))
+	if err := ValidateNoCycles(ok); err != nil {
+		t.Errorf("ValidateNoCycles non-cyclic err=%v", err)
+	}
+}
+
+func TestTreePrinter_Golden(t *testing.T) {
+	root := Container("Root",
+		Field("[step]->A"),
+		If(`now() - year([step]->A) > 1`,
+			Container("Then", Field("[more]->X")),
+			Container("Else", Field("[more]->Y")),
+		),
+	)
+	var buf bytes.Buffer
+	p := NewTreePrinter(&buf)
+	if err := p.Print(root); err != nil {
+		t.Fatalf("Print err=%v", err)
+	}
+	got := buf.String()
+	wantContains := []string{
+		`(Container) name="Root"`,
+		`├── (Field) field="[step]->A"`,
+		`└── (If) expr="now() - year([step]->A) > 1"`,
+		`    ├── (Container) name="Then"`,
+		`    │   └── (Field) field="[more]->X"`,
+		`    └── (Container) name="Else"`,
+		`        └── (Field) field="[more]->Y"`,
+	}
+	for _, w := range wantContains {
+		if !strings.Contains(got, w) {
+			t.Errorf("printer output missing:\n%s\n--- got ---\n%s", w, got)
+		}
+	}
+}
+
+func TestAllFields_StableCopy(t *testing.T) {
+	root := Container("Root", Field("a"), If("true", Field("b"), Field("c")))
+	astTree, _ := NewAST(root)
+	all := astTree.AllFields()
+	cp := astTree.AllFields()
+	if &all[0] == &cp[0] {
+		t.Errorf("AllFields should return a copy, not same backing array")
+	}
+}
+
+func TestIfNode_CollectPaths_NoExistStillIncludedInFields(t *testing.T) {
+	root := If(`year([missing]->[X]) > 2000`, Field("a"), Field("b"))
+	astTree, _ := NewAST(root)
+	fields := astTree.Selected(Form{})
+	if !sliceHasAll(fields, "[missing]->[X]") {
+		t.Errorf("Selected should include expr path even if value missing, got %#v", fields)
+	}
+}
+
+func TestChoice_MultipleSelections_WithIf(t *testing.T) {
+	root := Choice("choices", true,
+		Option("foo", If(`years_since([step]->[A]) > 1`, Field("X1"), Field("Y1"))),
+		Option("bar", If(`years_since([step]->[A]) <= 1`, Field("X2"), Field("Y2"))),
+	)
+	astTree, _ := NewAST(root)
+	form := Form{
+		"choices": []any{"foo", "bar"},
+		"step":    Form{"A": time.Now().Format("2006/01/02")},
+		"X1":      "hit",
+		"X2":      "miss",
+		"Y1":      "miss",
+		"Y2":      "miss",
+	}
+	sel := astTree.Selected(form)
+	if !sliceHasAll(sel, "choices", "Y1", "X2") {
+		t.Errorf("Selected = %#v, want include choices X1 Y2", sel)
+	}
+}
+
+func TestDate(t *testing.T) {
+	timeValue := "2025-05-05"
+	for _, ly := range []string{time.RFC3339, "2006-01-02", "2006/01/02", "2006-01-02 15:04:05"} {
+		if tm, err := time.Parse(ly, timeValue); err == nil {
+			fmt.Println(float64(time.Now().YearDay() - tm.YearDay()))
+		}
 	}
 }

@@ -6,6 +6,8 @@ import (
 	"io"
 	"strconv"
 	"strings"
+	"time"
+	"unicode"
 )
 
 type Node interface {
@@ -229,6 +231,93 @@ func (c *ContainerNode) KeyValue(form Form) map[string]any {
 	return mergeChildKeyValues(c.Children(), form)
 }
 
+type IfNode struct {
+	ExprSrc string
+	Expr    Expr
+	Then    Node
+	Else    Node
+}
+
+func If(expr string, then Node, elseNode Node) *IfNode {
+	parsed, err := ParseExpr(expr)
+	if err != nil {
+		parsed = &BoolExpr{Value: false}
+	}
+	return &IfNode{
+		ExprSrc: strings.TrimSpace(expr),
+		Expr:    parsed,
+		Then:    then,
+		Else:    elseNode,
+	}
+}
+
+func (n *IfNode) String() string {
+	return fmt.Sprintf(`(If) expr="%s"`, n.ExprSrc)
+}
+
+func (n *IfNode) Children() []Node {
+	var out []Node
+	if n.Then != nil {
+		out = append(out, n.Then)
+	}
+	if n.Else != nil {
+		out = append(out, n.Else)
+	}
+	return out
+}
+
+func (n *IfNode) Fields(form Form) []string {
+	if form == nil {
+		return []string{}
+	}
+	paths := n.Expr.CollectPaths()
+	fields := append([]string{}, paths...)
+
+	ok, _ := EvalBool(n.Expr, form)
+	if ok {
+		if n.Then != nil {
+			fields = append(fields, n.Then.Fields(form)...)
+		}
+	} else {
+		if n.Else != nil {
+			fields = append(fields, n.Else.Fields(form)...)
+		}
+	}
+	return unique(fields)
+}
+
+func (n *IfNode) AllFields() []string {
+	paths := n.Expr.CollectPaths()
+	var out []string
+	out = append(out, paths...)
+	if n.Then != nil {
+		out = append(out, n.Then.AllFields()...)
+	}
+	if n.Else != nil {
+		out = append(out, n.Else.AllFields()...)
+	}
+	return unique(out)
+}
+
+func (n *IfNode) KeyValue(form Form) map[string]any {
+	out := make(map[string]any)
+	ok, _ := EvalBool(n.Expr, form)
+	if ok {
+		if n.Then != nil {
+			for k, v := range n.Then.KeyValue(form) {
+				out[k] = v
+			}
+		}
+	} else {
+		if n.Else != nil {
+			for k, v := range n.Else.KeyValue(form) {
+				out[k] = v
+			}
+		}
+	}
+	return out
+}
+
 func mergeChildKeyValues(children []Node, form Form) map[string]any {
 	out := make(map[string]any)
 	for _, c := range children {
@@ -239,22 +328,30 @@ func mergeChildKeyValues(children []Node, form Form) map[string]any {
 	return out
 }
 
-type PathSegment struct { // PathSegment [a]->[b]->0->c => [{Key:"a",IsIndex:false}, {Key:"b",IsIndex:false}, {Key:"0",IsIndex:true}, {Key:"c",IsIndex:false}]
+type PathSegment struct { // e.g.: [a]->[b]->0->[c] => [{Key:"a",IsIndex:false}, {Key:"b",IsIndex:false}, {Key:"0",IsIndex:true}, {Key:"c",IsIndex:false}]
 	Key     string
 	IsIndex bool
 }
 
-func splitArrowPath(field string) []PathSegment { // splitArrowPath support the syntax: "[a]->[b]->0->c"
+func splitArrowPath(field string) []PathSegment { // supported: "[a]->[b]->0->[c]"
 	rawParts := strings.Split(field, SEPARATOR)
 	segs := make([]PathSegment, 0, len(rawParts))
 	for _, raw := range rawParts {
 		p := strings.TrimSpace(raw)
+
+		// map[key]
 		if strings.HasPrefix(p, "[") && strings.HasSuffix(p, "]") {
 			p = p[1 : len(p)-1]
 			segs = append(segs, PathSegment{Key: p, IsIndex: false})
 			continue
 		}
-		segs = append(segs, PathSegment{Key: p, IsIndex: func(s string) bool { _, err := strconv.Atoi(s); return err == nil }(p)})
+
+		// array[index]
+		index, err := strconv.Atoi(p)
+		segs = append(segs, PathSegment{
+			Key:     p,
+			IsIndex: err == nil && index >= 0,
+		})
 	}
 	return segs
 }
@@ -278,6 +375,18 @@ func GetValueByKeyPath(data any, path []PathSegment) (any, bool) {
 
 		switch m := cur.(type) {
 		case []any:
+			idx, err := strconv.Atoi(seg.Key)
+			if err != nil || idx < 0 || idx >= len(m) {
+				return nil, false
+			}
+			cur = m[idx]
+		case []string:
+			idx, err := strconv.Atoi(seg.Key)
+			if err != nil || idx < 0 || idx >= len(m) {
+				return nil, false
+			}
+			cur = m[idx]
+		case []map[string]any:
 			idx, err := strconv.Atoi(seg.Key)
 			if err != nil || idx < 0 || idx >= len(m) {
 				return nil, false
@@ -422,4 +531,698 @@ func ValidateNoCycles(root Node) error {
 	}
 
 	return dfs(root)
+}
+
+type Expr interface {
+	Eval(form Form) (any, error)
+	CollectPaths() []string
+	String() string
+}
+
+type NumberExpr struct{ Value float64 }
+
+func (e *NumberExpr) Eval(Form) (any, error) { return e.Value, nil }
+func (e *NumberExpr) CollectPaths() []string { return nil }
+func (e *NumberExpr) String() string         { return fmt.Sprintf("%v", e.Value) }
+
+type StringExpr struct{ Value string }
+
+func (e *StringExpr) Eval(Form) (any, error) { return e.Value, nil }
+func (e *StringExpr) CollectPaths() []string { return nil }
+func (e *StringExpr) String() string         { return strconv.Quote(e.Value) }
+
+type BoolExpr struct{ Value bool }
+
+func (e *BoolExpr) Eval(Form) (any, error) { return e.Value, nil }
+func (e *BoolExpr) CollectPaths() []string { return nil }
+func (e *BoolExpr) String() string {
+	if e.Value {
+		return "true"
+	}
+	return "false"
+}
+
+type DateExpr struct{ Value time.Time }
+
+func (e *DateExpr) Eval(Form) (any, error) { return e.Value, nil }
+func (e *DateExpr) CollectPaths() []string { return nil }
+func (e *DateExpr) String() string {
+	return e.Value.String()
+}
+
+// PathChainExpr the path chain parsed by Pratt: seg1 -> seg2 -> ...
+type PathChainExpr struct {
+	Segments []PathSegment
+}
+
+func (e *PathChainExpr) Eval(form Form) (any, error) {
+	v, ok := GetValueByKeyPath(form, e.Segments)
+	if !ok {
+		return nil, fmt.Errorf("path not found: %s", e.CollectPaths()[0])
+	}
+	return v, nil
+}
+
+func (e *PathChainExpr) CollectPaths() []string {
+	var b strings.Builder
+	for i, seg := range e.Segments {
+		if i > 0 {
+			b.WriteString(SEPARATOR)
+		}
+		if seg.IsIndex { // array
+			b.WriteString(seg.Key)
+		} else { // map
+			b.WriteByte('[')
+			b.WriteString(seg.Key)
+			b.WriteByte(']')
+		}
+	}
+	return []string{b.String()}
+}
+
+func (e *PathChainExpr) String() string {
+	paths := e.CollectPaths()
+	if len(paths) == 1 {
+		return paths[0]
+	}
+	return strings.Join(paths, ",")
+}
+
+type IdentExpr struct{ Name string }
+
+func (e *IdentExpr) Eval(Form) (any, error) { return e.Name, nil }
+func (e *IdentExpr) CollectPaths() []string { return nil }
+func (e *IdentExpr) String() string         { return e.Name }
+
+type CallExpr struct {
+	Name string
+	Args []Expr
+}
+
+func (e *CallExpr) Eval(form Form) (any, error) { return evalCall(e.Name, e.Args, form) }
+func (e *CallExpr) CollectPaths() []string {
+	var out []string
+	for _, a := range e.Args {
+		out = append(out, a.CollectPaths()...)
+	}
+	return unique(out)
+}
+func (e *CallExpr) String() string {
+	parts := make([]string, len(e.Args))
+	for i, a := range e.Args {
+		parts[i] = a.String()
+	}
+	return fmt.Sprintf("%s(%s)", e.Name, strings.Join(parts, ", "))
+}
+
+type PrefixExpr struct {
+	Op    string // '! Or a single negative sign 'u-'
+	Right Expr
+}
+
+func (e *PrefixExpr) Eval(form Form) (any, error) { return evalPrefix(e.Op, e.Right, form) }
+func (e *PrefixExpr) CollectPaths() []string      { return e.Right.CollectPaths() }
+func (e *PrefixExpr) String() string              { return fmt.Sprintf("(%s %s)", e.Op, e.Right.String()) }
+
+type InfixExpr struct {
+	Left  Expr
+	Op    string // + - * / > >= < <= == != && ||
+	Right Expr
+}
+
+func (e *InfixExpr) Eval(form Form) (any, error) { return evalInfix(e.Left, e.Op, e.Right, form) }
+func (e *InfixExpr) CollectPaths() []string {
+	return unique(append(e.Left.CollectPaths(), e.Right.CollectPaths()...))
+}
+func (e *InfixExpr) String() string {
+	return fmt.Sprintf("(%s %s %s)", e.Left.String(), e.Op, e.Right.String())
+}
+
+type tokType int
+
+const (
+	tEOF tokType = iota
+	tNumber
+	tString
+	tIdent
+	tPathKey // [name]
+	tLParen  // (
+	tRParen  // )
+	tComma   // ,
+	tOp      // + - * / > < >= <= == != && || !
+	tArrow   // ->
+)
+
+type token struct {
+	typ tokType
+	val string
+}
+
+type lexer struct {
+	s   string
+	pos int
+}
+
+func (l *lexer) peek() rune {
+	if l.pos >= len(l.s) {
+		return 0
+	}
+	return rune(l.s[l.pos])
+}
+func (l *lexer) next() rune {
+	if l.pos >= len(l.s) {
+		return 0
+	}
+	r := rune(l.s[l.pos])
+	l.pos++
+	return r
+}
+func (l *lexer) skipSpace() {
+	for unicode.IsSpace(l.peek()) {
+		l.next()
+	}
+}
+
+func (l *lexer) readNumber(first rune) token {
+	var sb strings.Builder
+	sb.WriteRune(first)
+	dotUsed := first == '.'
+	expUsed := false
+	for {
+		r := l.peek()
+		switch {
+		case unicode.IsDigit(r):
+			sb.WriteRune(l.next())
+		case r == '.' && !dotUsed:
+			dotUsed = true
+			sb.WriteRune(l.next())
+		case (r == 'e' || r == 'E') && !expUsed:
+			expUsed = true
+			sb.WriteRune(l.next())
+			if l.peek() == '+' || l.peek() == '-' {
+				sb.WriteRune(l.next())
+			}
+			// There must be at least one exponential figure
+			for unicode.IsDigit(l.peek()) {
+				sb.WriteRune(l.next())
+			}
+		default:
+			return token{tNumber, sb.String()}
+		}
+	}
+}
+
+func (l *lexer) readIdent(first rune) token {
+	sb := strings.Builder{}
+	sb.WriteRune(first)
+	for {
+		r := l.peek()
+		if unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' {
+			sb.WriteRune(l.next())
+		} else {
+			break
+		}
+	}
+	return token{tIdent, sb.String()}
+}
+func (l *lexer) readString() (token, error) {
+	sb := strings.Builder{}
+	for {
+		r := l.next()
+		if r == 0 {
+			return token{}, fmt.Errorf("unterminated string")
+		}
+		if r == '"' {
+			break
+		}
+		// TODO Simplification: Do not handle escaping
+		sb.WriteRune(r)
+	}
+	return token{tString, sb.String()}, nil
+}
+
+func (l *lexer) nextToken() (token, error) {
+	l.skipSpace()
+	r := l.next()
+	switch {
+	case r == 0:
+		return token{tEOF, ""}, nil
+	case unicode.IsDigit(r) || (r == '.' && unicode.IsDigit(l.peek())):
+		return l.readNumber(r), nil
+	case unicode.IsLetter(r) || r == '_':
+		return l.readIdent(r), nil
+	case r == '"':
+		return l.readString()
+	case r == '[':
+		// Read the paired ']'
+		start := l.pos
+		for {
+			ch := l.next()
+			if ch == 0 {
+				return token{}, fmt.Errorf("unterminated [path] key")
+			}
+			if ch == ']' {
+				inner := l.s[start : l.pos-1]
+				return token{tPathKey, inner}, nil
+			}
+		}
+	case r == '(':
+		return token{tLParen, "("}, nil
+	case r == ')':
+		return token{tRParen, ")"}, nil
+	case r == ',':
+		return token{tComma, ","}, nil
+	case r == '-':
+		if l.peek() == '>' {
+			l.next() // consume '>'
+			return token{tArrow, "->"}, nil
+		}
+		return token{tOp, "-"}, nil
+	default:
+		// Handle the comparison of two characters
+		r2 := l.peek()
+		op := string(r)
+		if (r == '>' || r == '<' || r == '=' || r == '!') && r2 == '=' {
+			op += string(l.next())
+			return token{tOp, op}, nil
+		} else if r == '&' && r2 == '&' {
+			op += string(l.next())
+			return token{tOp, op}, nil
+		} else if r == '|' && r2 == '|' {
+			op += string(l.next())
+			return token{tOp, op}, nil
+		}
+		return token{tOp, op}, nil
+	}
+}
+
+type parser struct {
+	toks []token
+	i    int
+}
+
+func (p *parser) cur() token {
+	if p.i >= len(p.toks) {
+		return token{tEOF, ""}
+	}
+	return p.toks[p.i]
+}
+func (p *parser) eat() token {
+	t := p.cur()
+	if p.i < len(p.toks) {
+		p.i++
+	}
+	return t
+}
+func (p *parser) expect(typ tokType, val string) error {
+	if p.cur().typ != typ || (val != "" && p.cur().val != val) {
+		return fmt.Errorf("expect %v:%q, got %v:%q", typ, val, p.cur().typ, p.cur().val)
+	}
+	p.eat()
+	return nil
+}
+
+// Binding force (the greater the priority)
+func lbp(t token) int {
+	switch t.typ {
+	case tArrow:
+		return 80 // The priority of path connection is the highest
+	case tOp:
+		switch t.val {
+		case "||":
+			return 10
+		case "&&":
+			return 20
+		case "==", "!=", "<", ">", "<=", ">=":
+			return 30
+		case "+", "-":
+			return 40
+		case "*", "/":
+			return 50
+		}
+	}
+	return 0
+}
+
+func (p *parser) parseExpr(rbp int) (Expr, error) {
+	t := p.eat()
+	left, err := p.nud(t)
+	if err != nil {
+		return nil, err
+	}
+	for {
+		curTok := p.cur()
+		if curTok.typ != tOp && curTok.typ != tArrow {
+			break
+		}
+		if lbp(curTok) <= rbp {
+			break
+		}
+		p.eat()
+		left, err = p.led(curTok, left)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return left, nil
+}
+
+func (p *parser) nud(t token) (Expr, error) {
+	switch t.typ {
+	case tNumber:
+		float, err := strconv.ParseFloat(t.val, 64)
+		if err != nil {
+			return &NumberExpr{}, err
+		}
+		return &NumberExpr{Value: float}, nil
+	case tString:
+		return &StringExpr{Value: t.val}, nil
+	case tIdent:
+		// Function call ident '(' args? ') '
+		if p.cur().typ == tLParen {
+			p.eat() // '('
+			var args []Expr
+			if p.cur().typ != tRParen {
+				for {
+					arg, err := p.parseExpr(0)
+					if err != nil {
+						return nil, err
+					}
+					args = append(args, arg)
+					if p.cur().typ == tComma {
+						p.eat()
+						continue
+					}
+					break
+				}
+			}
+			if err := p.expect(tRParen, ")"); err != nil {
+				return nil, err
+			}
+			return &CallExpr{Name: t.val, Args: args}, nil
+		}
+		// Ordinary identifiers (non-functions)
+		switch strings.ToLower(t.val) {
+		case "true":
+			return &BoolExpr{Value: true}, nil
+		case "false":
+			return &BoolExpr{Value: false}, nil
+		}
+		return &IdentExpr{Name: t.val}, nil
+
+	case tPathKey:
+		// Path starting point: Depart from the root form
+		return &PathChainExpr{Segments: []PathSegment{{Key: t.val, IsIndex: false}}}, nil
+
+	case tOp:
+		switch t.val {
+		case "!":
+			right, err := p.parseExpr(60) // Prefix binding force > all binary
+			if err != nil {
+				return nil, err
+			}
+			return &PrefixExpr{Op: "!", Right: right}, nil
+		case "-":
+			// unary minus
+			right, err := p.parseExpr(60)
+			if err != nil {
+				return nil, err
+			}
+			return &PrefixExpr{Op: "u-", Right: right}, nil
+		}
+
+	case tLParen:
+		expr, err := p.parseExpr(0)
+		if err != nil {
+			return nil, err
+		}
+		if err := p.expect(tRParen, ")"); err != nil {
+			return nil, err
+		}
+		return expr, nil
+	}
+	return nil, fmt.Errorf("unexpected token in nud: %v %q", t.typ, t.val)
+}
+
+func (p *parser) led(t token, left Expr) (Expr, error) {
+	switch t.typ {
+	case tArrow:
+		seg, err := p.parsePathSegment()
+		if err != nil {
+			return nil, err
+		}
+		var chain *PathChainExpr
+		switch l := left.(type) {
+		case *PathChainExpr:
+			chain = l
+		default:
+			return nil, fmt.Errorf("left side of '->' must be a path (got %T)", left)
+		}
+		chain.Segments = append(chain.Segments, seg)
+		return chain, nil
+
+	case tOp:
+		right, err := p.parseExpr(lbp(t))
+		if err != nil {
+			return nil, err
+		}
+		return &InfixExpr{Left: left, Op: t.val, Right: right}, nil
+	}
+	return nil, fmt.Errorf("unexpected token in led: %v %q", t.typ, t.val)
+}
+
+// Read a path segment： [key] | ident | number
+func (p *parser) parsePathSegment() (PathSegment, error) {
+	switch p.cur().typ {
+	case tPathKey:
+		key := p.eat().val
+		return PathSegment{Key: key, IsIndex: false}, nil
+	case tIdent:
+		key := p.eat().val
+		return PathSegment{Key: key, IsIndex: false}, nil
+	case tNumber:
+		num := p.eat().val
+		return PathSegment{Key: num, IsIndex: true}, nil
+	default:
+		return PathSegment{}, fmt.Errorf("invalid path segment after '->': %v %q", p.cur().typ, p.cur().val)
+	}
+}
+
+func ParseExpr(src string) (Expr, error) {
+	lex := &lexer{s: src}
+	var toks []token
+	for {
+		t, err := lex.nextToken()
+		if err != nil {
+			return nil, err
+		}
+		if t.typ == tEOF {
+			break
+		}
+		toks = append(toks, t)
+	}
+	p := &parser{toks: toks}
+	expr, err := p.parseExpr(0)
+	if err != nil {
+		return nil, err
+	}
+	if p.cur().typ != tEOF {
+		return nil, fmt.Errorf("unexpected token: %v %q", p.cur().typ, p.cur().val)
+	}
+	return expr, nil
+}
+
+func EvalBool(e Expr, form Form) (bool, error) {
+	v, err := e.Eval(form)
+	if err != nil {
+		return false, err
+	}
+	return toBool(v), nil
+}
+
+func toFloat(v any) (float64, bool) {
+	switch t := v.(type) {
+	case nil:
+		return 0, false
+	case float64:
+		return t, true
+	case float32:
+		return float64(t), true
+	case int:
+		return float64(t), true
+	case int64:
+		return float64(t), true
+	case string:
+		f, err := strconv.ParseFloat(strings.TrimSpace(t), 64)
+		return f, err == nil
+	case bool:
+		if t {
+			return 1, true
+		}
+		return 0, true
+	}
+	return 0, false
+}
+
+func toBool(v any) bool {
+	switch t := v.(type) {
+	case bool:
+		return t
+	case nil:
+		return false
+	case string:
+		s := strings.ToLower(strings.TrimSpace(t))
+		return s == "true" || s == "1" || s == "yes" || s == "y"
+	case int, int64, float64, float32:
+		f, _ := toFloat(t)
+		return f != 0
+	}
+	return false
+}
+
+func evalCall(name string, args []Expr, form Form) (any, error) {
+	switch strings.ToLower(name) {
+	case "years_since":
+		dateError := fmt.Errorf("date(yyyymmdd): invalid yyyymmdd of arguments: %d", len(args))
+		if len(args) != 1 {
+			return float64(0), dateError
+		}
+
+		v, err := args[0].Eval(form)
+		if err != nil {
+			return float64(0), err
+		}
+
+		if v == nil {
+			return float64(0), dateError
+		}
+
+		if s, ok := v.(string); ok && strings.TrimSpace(s) == "" {
+			return float64(0), dateError
+		}
+
+		if timeValue, ok := v.(string); ok {
+			for _, ly := range []string{time.RFC3339, "2006-01-02", "2006/01/02", "2006-01-02 15:04:05"} {
+				if tm, err := time.Parse(ly, timeValue); err == nil {
+					now := time.Now()
+					y := now.Year() - tm.Year()
+					if now.YearDay() < tm.YearDay() {
+						y--
+					}
+					return float64(y), nil
+				}
+			}
+		}
+	case "int":
+		intError := fmt.Errorf("int(x): invalid x of arguments: %d", len(args))
+		if len(args) != 1 {
+			return float64(0), intError
+		}
+		v, _ := args[0].Eval(form)
+		f, ok := toFloat(v)
+		if !ok {
+			return float64(0), intError
+		}
+		return float64(int(f)), nil
+	case "float":
+		floatError := fmt.Errorf("float(x): invalid x of arguments: %d", len(args))
+		if len(args) != 1 {
+			return float64(0), floatError
+		}
+		v, _ := args[0].Eval(form)
+		f, ok := toFloat(v)
+		if !ok {
+			return float64(0), floatError
+		}
+		return f, nil
+	}
+	return nil, fmt.Errorf("unknown function: %s", name)
+}
+
+func evalPrefix(op string, right Expr, form Form) (any, error) {
+	rv, err := right.Eval(form)
+	if err != nil {
+		return nil, err
+	}
+	switch op {
+	case "!":
+		return !toBool(rv), nil
+	case "u-":
+		if f, ok := toFloat(rv); ok {
+			return -f, nil
+		}
+		return float64(0), nil
+	}
+	return nil, fmt.Errorf("unknown prefix op: %s", op)
+}
+
+func evalInfix(left Expr, op string, right Expr, form Form) (any, error) {
+	lv, err := left.Eval(form)
+	if err != nil {
+		return nil, err
+	}
+	rv, err := right.Eval(form)
+	if err != nil {
+		return nil, err
+	}
+
+	switch op {
+	case "+", "-", "*", "/":
+		lf, lok := toFloat(lv)
+		rf, rok := toFloat(rv)
+		if !(lok && rok) {
+			return float64(0), nil
+		}
+		switch op {
+		case "+":
+			return lf + rf, nil
+		case "-":
+			return lf - rf, nil
+		case "*":
+			return lf * rf, nil
+		case "/":
+			if rf == 0 {
+				return nil, fmt.Errorf("division by zero")
+			}
+			return lf / rf, nil
+		}
+	case ">", ">=", "<", "<=", "==", "!=":
+		if lf, lok := toFloat(lv); lok {
+			if rf, rok := toFloat(rv); rok {
+				switch op {
+				case ">":
+					return lf > rf, nil
+				case ">=":
+					return lf >= rf, nil
+				case "<":
+					return lf < rf, nil
+				case "<=":
+					return lf <= rf, nil
+				case "==":
+					return lf == rf, nil
+				case "!=":
+					return lf != rf, nil
+				}
+			}
+		}
+		// Degenerate to string comparison
+		ls := fmt.Sprintf("%v", lv)
+		rs := fmt.Sprintf("%v", rv)
+		switch op {
+		case "==":
+			return ls == rs, nil
+		case "!=":
+			return ls != rs, nil
+		default:
+			return false, nil
+		}
+	case "&&", "||":
+		lb := toBool(lv)
+		rb := toBool(rv)
+		if op == "&&" {
+			return lb && rb, nil
+		}
+		return lb || rb, nil
+	}
+	return nil, fmt.Errorf("unknown infix op: %s", op)
 }
