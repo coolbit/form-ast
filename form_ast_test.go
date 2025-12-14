@@ -1013,7 +1013,6 @@ func TestParseExpr_LogicalAndCompare(t *testing.T) {
 
 func TestParseExpr_Functions(t *testing.T) {
 	RegisterFunc("years_since", func(args []any) (any, error) {
-		// 原来这句错误信息就不太对，这里顺便改清晰一点
 		if len(args) != 1 {
 			return float64(0), fmt.Errorf("years_since(x): invalid number of arguments: %d", len(args))
 		}
@@ -1024,7 +1023,6 @@ func TestParseExpr_Functions(t *testing.T) {
 			return float64(0), fmt.Errorf("years_since(x): x is nil")
 		}
 
-		// 支持空字符串校验
 		if s, ok := v.(string); ok && strings.TrimSpace(s) == "" {
 			return float64(0), fmt.Errorf("years_since(x): empty date string")
 		}
