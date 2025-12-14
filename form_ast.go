@@ -6,7 +6,6 @@ import (
 	"io"
 	"strconv"
 	"strings"
-	"time"
 	"unicode"
 )
 
@@ -560,14 +559,6 @@ func (e *BoolExpr) String() string {
 		return "true"
 	}
 	return "false"
-}
-
-type DateExpr struct{ Value time.Time }
-
-func (e *DateExpr) Eval(Form) (any, error) { return e.Value, nil }
-func (e *DateExpr) CollectPaths() []string { return nil }
-func (e *DateExpr) String() string {
-	return e.Value.String()
 }
 
 // PathChainExpr the path chain parsed by Pratt: seg1 -> seg2 -> ...
