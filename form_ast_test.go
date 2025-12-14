@@ -1012,6 +1012,62 @@ func TestParseExpr_LogicalAndCompare(t *testing.T) {
 }
 
 func TestParseExpr_Functions(t *testing.T) {
+	RegisterFunc("years_since", func(args []any) (any, error) {
+		// 原来这句错误信息就不太对，这里顺便改清晰一点
+		if len(args) != 1 {
+			return float64(0), fmt.Errorf("years_since(x): invalid number of arguments: %d", len(args))
+		}
+
+		v := args[0]
+
+		if v == nil {
+			return float64(0), fmt.Errorf("years_since(x): x is nil")
+		}
+
+		// 支持空字符串校验
+		if s, ok := v.(string); ok && strings.TrimSpace(s) == "" {
+			return float64(0), fmt.Errorf("years_since(x): empty date string")
+		}
+
+		var tm time.Time
+		var parsed bool
+
+		switch val := v.(type) {
+		case time.Time:
+			tm = val
+			parsed = true
+
+		case string:
+			timeValue := val
+			layouts := []string{
+				time.RFC3339,
+				"2006-01-02",
+				"2006/01/02",
+				"2006-01-02 15:04:05",
+			}
+			for _, ly := range layouts {
+				if t, err := time.Parse(ly, timeValue); err == nil {
+					tm = t
+					parsed = true
+					break
+				}
+			}
+
+		default:
+			return float64(0), fmt.Errorf("years_since(x): unsupported type %T", v)
+		}
+
+		if !parsed {
+			return float64(0), fmt.Errorf("years_since(x): failed to parse date from %v", v)
+		}
+
+		now := time.Now()
+		y := now.Year() - tm.Year()
+		if now.YearDay() < tm.YearDay() {
+			y--
+		}
+		return float64(y), nil
+	})
 	e1, _ := ParseExpr(`int(3.7)`)
 	v1, _ := e1.Eval(Form{})
 	if f, _ := toFloat(v1); f != 3 {

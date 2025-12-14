@@ -1080,65 +1080,6 @@ func toBool(v any) bool {
 	return false
 }
 
-func evalCall(name string, args []Expr, form Form) (any, error) {
-	switch strings.ToLower(name) {
-	case "years_since":
-		dateError := fmt.Errorf("date(yyyymmdd): invalid yyyymmdd of arguments: %d", len(args))
-		if len(args) != 1 {
-			return float64(0), dateError
-		}
-
-		v, err := args[0].Eval(form)
-		if err != nil {
-			return float64(0), err
-		}
-
-		if v == nil {
-			return float64(0), dateError
-		}
-
-		if s, ok := v.(string); ok && strings.TrimSpace(s) == "" {
-			return float64(0), dateError
-		}
-
-		if timeValue, ok := v.(string); ok {
-			for _, ly := range []string{time.RFC3339, "2006-01-02", "2006/01/02", "2006-01-02 15:04:05"} {
-				if tm, err := time.Parse(ly, timeValue); err == nil {
-					now := time.Now()
-					y := now.Year() - tm.Year()
-					if now.YearDay() < tm.YearDay() {
-						y--
-					}
-					return float64(y), nil
-				}
-			}
-		}
-	case "int":
-		intError := fmt.Errorf("int(x): invalid x of arguments: %d", len(args))
-		if len(args) != 1 {
-			return float64(0), intError
-		}
-		v, _ := args[0].Eval(form)
-		f, ok := toFloat(v)
-		if !ok {
-			return float64(0), intError
-		}
-		return float64(int(f)), nil
-	case "float":
-		floatError := fmt.Errorf("float(x): invalid x of arguments: %d", len(args))
-		if len(args) != 1 {
-			return float64(0), floatError
-		}
-		v, _ := args[0].Eval(form)
-		f, ok := toFloat(v)
-		if !ok {
-			return float64(0), floatError
-		}
-		return f, nil
-	}
-	return nil, fmt.Errorf("unknown function: %s", name)
-}
-
 func evalPrefix(op string, right Expr, form Form) (any, error) {
 	rv, err := right.Eval(form)
 	if err != nil {
@@ -1225,4 +1166,54 @@ func evalInfix(left Expr, op string, right Expr, form Form) (any, error) {
 		return lb || rb, nil
 	}
 	return nil, fmt.Errorf("unknown infix op: %s", op)
+}
+
+var funcRegistry = map[string]CustomFunc{}
+
+type CustomFunc func(args []any) (any, error)
+
+func RegisterFunc(name string, fn CustomFunc) {
+	funcRegistry[strings.ToLower(name)] = fn
+}
+
+func evalCall(name string, args []Expr, form Form) (any, error) {
+	fn, ok := funcRegistry[strings.ToLower(name)]
+	if !ok {
+		return nil, fmt.Errorf("unknown function: %s", name)
+	}
+
+	values := make([]any, len(args))
+	for i, a := range args {
+		v, err := a.Eval(form)
+		if err != nil {
+			return nil, err
+		}
+		values[i] = v
+	}
+
+	return fn(values)
+}
+
+func init() {
+	RegisterFunc("int", func(args []any) (any, error) {
+		if len(args) != 1 {
+			return nil, fmt.Errorf("int(x) requires 1 arg")
+		}
+		f, ok := toFloat(args[0])
+		if !ok {
+			return nil, fmt.Errorf("invalid number for int")
+		}
+		return float64(int(f)), nil
+	})
+
+	RegisterFunc("float", func(args []any) (any, error) {
+		if len(args) != 1 {
+			return nil, fmt.Errorf("float(x) requires 1 arg")
+		}
+		f, ok := toFloat(args[0])
+		if !ok {
+			return nil, fmt.Errorf("invalid number for float")
+		}
+		return f, nil
+	})
 }
