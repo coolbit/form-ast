@@ -6,6 +6,7 @@ import (
 	"io"
 	"strconv"
 	"strings"
+	"sync"
 	"unicode"
 )
 
@@ -1160,10 +1161,14 @@ func evalInfix(left Expr, op string, right Expr, form Form) (any, error) {
 }
 
 var funcRegistry = map[string]CustomFunc{}
+var funcRegistryMutex sync.Mutex
 
 type CustomFunc func(args []any) (any, error)
 
 func RegisterFunc(name string, fn CustomFunc) {
+	funcRegistryMutex.Lock()
+	defer funcRegistryMutex.Unlock()
+
 	funcRegistry[strings.ToLower(name)] = fn
 }
 
