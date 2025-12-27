@@ -6,6 +6,7 @@ import (
 	"os"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -1369,11 +1370,128 @@ func TestChoice_MultipleSelections_WithIf(t *testing.T) {
 	}
 }
 
-func TestDate(t *testing.T) {
-	timeValue := "2025-05-05"
-	for _, ly := range []string{time.RFC3339, "2006-01-02", "2006/01/02", "2006-01-02 15:04:05"} {
-		if tm, err := time.Parse(ly, timeValue); err == nil {
-			fmt.Println(float64(time.Now().YearDay() - tm.YearDay()))
-		}
+func snapshotRegistry() map[string]CustomFunc {
+	funcRegistryMutex.Lock()
+	defer funcRegistryMutex.Unlock()
+
+	cp := make(map[string]CustomFunc, len(funcRegistry))
+	for k, v := range funcRegistry {
+		cp[k] = v
 	}
+	return cp
+}
+
+func restoreRegistry(snapshot map[string]CustomFunc) {
+	funcRegistryMutex.Lock()
+	defer funcRegistryMutex.Unlock()
+
+	funcRegistry = make(map[string]CustomFunc, len(snapshot))
+	for k, v := range snapshot {
+		funcRegistry[k] = v
+	}
+}
+
+func withRegistrySnapshot(t *testing.T, fn func()) {
+	t.Helper()
+	snap := snapshotRegistry()
+	defer restoreRegistry(snap)
+	fn()
+}
+
+func TestRegisterFunc_ConcurrentDistinctNames(t *testing.T) {
+	withRegistrySnapshot(t, func() {
+		const N = 500
+
+		var wg sync.WaitGroup
+		wg.Add(N)
+
+		for i := 0; i < N; i++ {
+			i := i
+			go func() {
+				defer wg.Done()
+
+				name := fmt.Sprintf("F_%d", i)
+				RegisterFunc(name, func(args []any) (any, error) {
+					return float64(i), nil
+				})
+			}()
+		}
+
+		wg.Wait()
+
+		for i := 0; i < N; i++ {
+			name := fmt.Sprintf("f_%d", i)
+			got, err := evalCall(name, nil, nil)
+			if err != nil {
+				t.Fatalf("evalCall(%q) error: %v", name, err)
+			}
+			if got != float64(i) {
+				t.Fatalf("evalCall(%q)=%v, want %v", name, got, float64(i))
+			}
+		}
+	})
+}
+
+func TestRegisterFunc_ConcurrentSameName_NoPanic(t *testing.T) {
+	withRegistrySnapshot(t, func() {
+		const N = 200
+
+		var wg sync.WaitGroup
+		wg.Add(N)
+
+		for i := 0; i < N; i++ {
+			i := i
+			go func() {
+				defer wg.Done()
+				RegisterFunc("SAME_NAME", func(args []any) (any, error) {
+					return float64(i), nil
+				})
+			}()
+		}
+		wg.Wait()
+
+		got, err := evalCall("same_name", nil, nil)
+		if err != nil {
+			t.Fatalf("evalCall error: %v", err)
+		}
+		f, ok := got.(float64)
+		if !ok {
+			t.Fatalf("unexpected type: %T (%v)", got, got)
+		}
+		if f < 0 || f >= float64(N) {
+			t.Fatalf("got %v out of range [0,%d)", f, N)
+		}
+	})
+}
+
+func TestRegisterAndEval_Concurrent_UnsafeDemo(t *testing.T) {
+	//t.Skip("Unskip to reproduce race/panic: evalCall reads funcRegistry without lock; run with `go test -race`")
+
+	withRegistrySnapshot(t, func() {
+		stop := make(chan struct{})
+		var wg sync.WaitGroup
+		wg.Add(2)
+
+		go func() {
+			defer wg.Done()
+			for i := 0; i < 200000; i++ {
+				RegisterFunc("RACE_FN", func(args []any) (any, error) { return float64(i), nil })
+			}
+			close(stop)
+		}()
+
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+					_, _ = evalCall("race_fn", nil, nil)
+				}
+			}
+		}()
+
+		wg.Wait()
+	})
 }

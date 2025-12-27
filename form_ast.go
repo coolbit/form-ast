@@ -1161,7 +1161,7 @@ func evalInfix(left Expr, op string, right Expr, form Form) (any, error) {
 }
 
 var funcRegistry = map[string]CustomFunc{}
-var funcRegistryMutex sync.Mutex
+var funcRegistryMutex sync.RWMutex
 
 type CustomFunc func(args []any) (any, error)
 
@@ -1173,7 +1173,10 @@ func RegisterFunc(name string, fn CustomFunc) {
 }
 
 func evalCall(name string, args []Expr, form Form) (any, error) {
+	funcRegistryMutex.RLock()
 	fn, ok := funcRegistry[strings.ToLower(name)]
+	funcRegistryMutex.RUnlock()
+
 	if !ok {
 		return nil, fmt.Errorf("unknown function: %s", name)
 	}
