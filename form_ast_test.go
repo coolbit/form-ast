@@ -2,6 +2,7 @@ package ast
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"reflect"
@@ -1494,4 +1495,218 @@ func TestRegisterAndEval_Concurrent_UnsafeDemo(t *testing.T) {
 
 		wg.Wait()
 	})
+}
+
+type failWriter struct{}
+
+func (f *failWriter) Write(p []byte) (n int, err error) {
+	return 0, errors.New("write failed")
+}
+
+func TestTreePrinter_WriteError(t *testing.T) {
+	// Test that Print propagates errors from the io.Writer
+	node := Field("test")
+	printer := NewTreePrinter(&failWriter{})
+	err := printer.Print(node)
+	if err == nil || err.Error() != "write failed" {
+		t.Errorf("Expected 'write failed' error, got %v", err)
+	}
+}
+
+func TestIfNode_NilBranches(t *testing.T) {
+	// Construct an IfNode manually with nil Then/Else to ensure no panic
+	node := &IfNode{
+		ExprSrc: "true",
+		Expr:    &BoolExpr{Value: true},
+		Then:    nil, // Explicitly nil
+		Else:    nil, // Explicitly nil
+	}
+
+	// 1. Test Fields (Should be safe)
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("IfNode.Fields panicked on nil children: %v", r)
+		}
+	}()
+	fields := node.Fields(Form{})
+	if len(fields) != 0 {
+		t.Errorf("Expected 0 fields, got %v", fields)
+	}
+
+	// 2. Test KeyValue (Should be safe)
+	kv := node.KeyValue(Form{})
+	if len(kv) != 0 {
+		t.Errorf("Expected empty KV, got %v", kv)
+	}
+
+	// 3. Test Children (Should return empty slice, not contain nils)
+	children := node.Children()
+	if len(children) != 0 {
+		t.Errorf("Expected 0 children, got %d", len(children))
+	}
+}
+
+func TestChoiceNode_DataMismatch(t *testing.T) {
+	// Case: Multiple=true, but Form contains a simple string (not slice)
+	// The implementation currently has a check for this, let's verify it acts as expected (ignores or handles).
+	chk := Choice("tags", true,
+		Option("a", Field("sub_a")),
+	)
+
+	form := Form{
+		"tags":  "invalid_string_instead_of_slice",
+		"sub_a": "val_a",
+	}
+
+	// Should not panic, should probably return just the main field, or empty selection for children
+	fields := chk.Fields(form)
+	expected := []string{"tags"} // It should at least return itself
+	if !reflect.DeepEqual(fields, expected) {
+		t.Errorf("Choice(Multiple=true) with string data: got %v, want %v", fields, expected)
+	}
+
+	kv := chk.KeyValue(form)
+	if len(kv) != 1 || kv["tags"] != "invalid_string_instead_of_slice" {
+		t.Errorf("KeyValue mismatch on invalid data: %v", kv)
+	}
+}
+
+func TestEval_NoShortCircuit(t *testing.T) {
+	// The current implementation evaluates BOTH left and right before checking && / ||.
+	// This test confirms that behavior (or fails if you optimize it later).
+	// "false && (1/0)" -> If short-circuiting, this is false. If eager, this is division by zero error.
+
+	expr, err := ParseExpr("false && (1 / 0)")
+	if err != nil {
+		t.Fatalf("Parse error: %v", err)
+	}
+
+	_, err = expr.Eval(Form{})
+	if err == nil || !strings.Contains(err.Error(), "division by zero") {
+		t.Errorf("Expected division by zero error (eager evaluation), got: %v", err)
+	}
+}
+
+func TestEval_TypeCoercion(t *testing.T) {
+	tests := []struct {
+		expr string
+		want any
+	}{
+		// String + Number
+		// "foo" fails to parse, so toFloat returns false.
+		// evalInfix sees !lok and returns 0 immediately (aborts operation).
+		{`"foo" + 5`, 0.0},
+
+		// "10" parses successfully as 10.0, so 10 + 5 = 15
+		{`"10" + 5`, 15.0},
+
+		// Comparison degeneracy
+		{`"a" == "a"`, true},
+		{`"a" == "b"`, false},
+		{`"a" != "b"`, true},
+
+		// Unary minus on string "hello" fails to parse, returns 0.0
+		{`-"hello"`, 0.0},
+	}
+
+	for _, tt := range tests {
+		e, err := ParseExpr(tt.expr)
+		if err != nil {
+			t.Errorf("ParseExpr(%q) failed: %v", tt.expr, err)
+			continue
+		}
+		got, err := e.Eval(Form{})
+		if err != nil {
+			t.Errorf("Eval(%q) failed: %v", tt.expr, err)
+			continue
+		}
+		if !reflect.DeepEqual(got, tt.want) {
+			t.Errorf("Eval(%q) = %v, want %v", tt.expr, got, tt.want)
+		}
+	}
+}
+
+func TestEval_CustomFuncError(t *testing.T) {
+	// Test propagation of errors from custom functions
+	funcName := "error_trigger"
+	RegisterFunc(funcName, func(args []any) (any, error) {
+		return nil, errors.New("custom boom")
+	})
+
+	expr, _ := ParseExpr("error_trigger()")
+	_, err := expr.Eval(Form{})
+	if err == nil || err.Error() != "custom boom" {
+		t.Errorf("Expected 'custom boom', got %v", err)
+	}
+}
+
+func TestLexer_ScientificNotation(t *testing.T) {
+	// The lexer implementation handles 'e'/'E'. Let's verify.
+	tests := []struct {
+		input string
+		want  float64
+	}{
+		{"1.5e2", 150},
+		{"1e+2", 100},
+		{"1E-1", 0.1},
+	}
+
+	for _, tt := range tests {
+		e, err := ParseExpr(tt.input)
+		if err != nil {
+			t.Errorf("ParseExpr(%q) error: %v", tt.input, err)
+			continue
+		}
+		res, _ := e.Eval(Form{})
+		if f, ok := toFloat(res); !ok || f != tt.want {
+			t.Errorf("Lexing scientific %q = %v, want %v", tt.input, res, tt.want)
+		}
+	}
+}
+
+func TestParser_Errors(t *testing.T) {
+	tests := []struct {
+		name       string
+		input      string
+		errSnippet string
+	}{
+		{"Unterminated string", `"hello`, "unterminated string"},
+		{"Unterminated path", `[user`, "unterminated [path] key"},
+		{"Invalid token", `@`, "unexpected token"},          // @ is not handled
+		{"Unbalanced parens", `(1 + 2`, "unexpected token"}, // EOF instead of )
+		{"Missing operand", `1 +`, "unexpected token"},
+		{"Bad path segment", `path -> "quoted"`, "invalid path segment"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := ParseExpr(tt.input)
+			if err == nil {
+				t.Errorf("Expected error for %q, got nil", tt.input)
+			} else if !strings.Contains(err.Error(), tt.errSnippet) && !strings.Contains(err.Error(), "expect") {
+				// "expect" covers p.expect() errors
+				t.Errorf("Error for %q was %q, expected containing %q", tt.input, err.Error(), tt.errSnippet)
+			}
+		})
+	}
+}
+
+// --- 6. Manual Struct Construction Safety ---
+
+func TestPrefixExpr_UnknownOp(t *testing.T) {
+	// Impossible via parser, but possible via struct literal
+	e := &PrefixExpr{Op: "???", Right: &NumberExpr{Value: 1}}
+	_, err := e.Eval(Form{})
+	if err == nil || !strings.Contains(err.Error(), "unknown prefix op") {
+		t.Errorf("Expected unknown prefix op error, got %v", err)
+	}
+}
+
+func TestInfixExpr_UnknownOp(t *testing.T) {
+	// Impossible via parser, but possible via struct literal
+	e := &InfixExpr{Left: &NumberExpr{Value: 1}, Op: "???", Right: &NumberExpr{Value: 1}}
+	_, err := e.Eval(Form{})
+	if err == nil || !strings.Contains(err.Error(), "unknown infix op") {
+		t.Errorf("Expected unknown infix op error, got %v", err)
+	}
 }
