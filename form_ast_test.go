@@ -1988,3 +1988,55 @@ func TestEval_Modulo(t *testing.T) {
 		}
 	}
 }
+
+func TestEval_Bitwise(t *testing.T) {
+	tests := []struct {
+		expr string
+		want float64
+	}{
+		// AND
+		{"5 & 3", 1}, // 101 & 011 = 001
+		// OR
+		{"5 | 3", 7}, // 101 | 011 = 111
+		// XOR
+		{"5 ^ 3", 6}, // 101 ^ 011 = 110
+		// Shift Left
+		{"1 << 2", 4}, // 1 * 2^2
+		// Shift Right
+		{"8 >> 2", 2}, // 8 / 2^2
+
+		// 优先级测试 1: 位运算 vs 加减法
+		// 应解析为: 5 & (3 + 1) = 5 & 4 = 4
+		// 如果优先级错了变成 (5 & 3) + 1 = 2
+		{"5 & 3 + 1", 4},
+
+		// 优先级测试 2: 位运算 vs 比较运算 (这是用户场景 flags & 4 == 4)
+		// 应解析为: (5 & 4) == 4 => 4 == 4 => true (转为 float 为 1)
+		// 如果优先级错了变成 5 & (4 == 4) => 5 & 1 => 1
+		// 让我们构造一个反例区分: 5 & 4 == 0
+		// 正确: (5 & 4) == 0 -> 4 == 0 -> false (0)
+		// 错误: 5 & (4 == 0) -> 5 & 0 -> 0
+		// 再来一个: 5 | 4 == 5
+		// 正确: (5 | 4) == 5 -> 5 == 5 -> true (1)
+		// 错误: 5 | (4 == 5) -> 5 | 0 -> 5
+		{"5 | 4 == 5", 1},
+	}
+
+	for _, tt := range tests {
+		e, err := ParseExpr(tt.expr)
+		if err != nil {
+			t.Errorf("ParseExpr(%q) failed: %v", tt.expr, err)
+			continue
+		}
+		got, err := e.Eval(Form{})
+		if err != nil {
+			t.Errorf("Eval(%q) failed: %v", tt.expr, err)
+			continue
+		}
+
+		f, ok := toFloat(got)
+		if !ok || f != tt.want {
+			t.Errorf("Eval(%q) = %v, want %v", tt.expr, got, tt.want)
+		}
+	}
+}

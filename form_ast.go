@@ -785,6 +785,8 @@ func (l *lexer) nextToken() (token, error) {
 		return token{tRParen, ")"}, nil
 	case r == ',':
 		return token{tComma, ","}, nil
+	case r == '^':
+		return token{tOp, "^"}, nil
 	case r == '-':
 		if l.peek() == '>' {
 			l.next() // consume '>'
@@ -795,6 +797,16 @@ func (l *lexer) nextToken() (token, error) {
 		// Handle the comparison of two characters
 		r2 := l.peek()
 		op := string(r)
+
+		if r == '<' && r2 == '<' {
+			l.next()
+			return token{tOp, "<<"}, nil
+		}
+		if r == '>' && r2 == '>' {
+			l.next()
+			return token{tOp, ">>"}, nil
+		}
+
 		if (r == '>' || r == '<' || r == '=' || r == '!') && r2 == '=' {
 			op += string(l.next())
 			return token{tOp, op}, nil
@@ -848,6 +860,8 @@ func lbp(t token) int {
 			return 20
 		case "==", "!=", "<", ">", "<=", ">=":
 			return 30
+		case "|", "^", "&", "<<", ">>":
+			return 35
 		case "+", "-":
 			return 40
 		case "*", "/", "%":
@@ -1101,7 +1115,7 @@ func evalInfix(left Expr, op string, right Expr, form Form) (any, error) {
 	}
 
 	switch op {
-	case "+", "-", "*", "/", "%":
+	case "+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>":
 		lf, lok := toFloat(lv)
 		rf, rok := toFloat(rv)
 
@@ -1110,6 +1124,23 @@ func evalInfix(left Expr, op string, right Expr, form Form) (any, error) {
 		}
 		if !(lok && rok) {
 			return float64(0), nil
+		}
+
+		if op == "&" || op == "|" || op == "^" || op == "<<" || op == ">>" {
+			li := int64(lf)
+			ri := int64(rf)
+			switch op {
+			case "&":
+				return float64(li & ri), nil
+			case "|":
+				return float64(li | ri), nil
+			case "^":
+				return float64(li ^ ri), nil
+			case "<<":
+				return float64(li << ri), nil
+			case ">>":
+				return float64(li >> ri), nil
+			}
 		}
 
 		switch op {
