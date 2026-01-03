@@ -1943,3 +1943,48 @@ func TestEval_StringConcatenation(t *testing.T) {
 		}
 	}
 }
+
+func TestEval_Modulo(t *testing.T) {
+	tests := []struct {
+		expr string
+		want float64
+	}{
+
+		{"10 % 3", 1},
+		{"10 % 2", 0},
+
+		{"5.5 % 2", 1.5},
+
+		// 2 + 10 % 3 => 2 + 1 => 3
+		{"2 + 10 % 3", 3},
+
+		// 10 % 4 % 3 => 2 % 3 => 2
+		{"10 % 4 % 3", 2},
+
+		// -10 % 4 % 3 => -2 % 3 => -2
+		{"-10 % 4 % 3", -2},
+	}
+
+	for _, tt := range tests {
+		e, err := ParseExpr(tt.expr)
+		if err != nil {
+			t.Errorf("ParseExpr(%q) failed: %v", tt.expr, err)
+			continue
+		}
+		got, err := e.Eval(Form{})
+		if err != nil {
+			t.Errorf("Eval(%q) failed: %v", tt.expr, err)
+			continue
+		}
+
+		f, ok := toFloat(got)
+		if !ok {
+			t.Errorf("Eval(%q) result not number: %v", tt.expr, got)
+			continue
+		}
+
+		if f != tt.want {
+			t.Errorf("Eval(%q) = %v, want %v", tt.expr, f, tt.want)
+		}
+	}
+}

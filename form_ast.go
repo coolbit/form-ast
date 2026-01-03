@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"math"
 	"strconv"
 	"strings"
 	"sync"
@@ -849,7 +850,7 @@ func lbp(t token) int {
 			return 30
 		case "+", "-":
 			return 40
-		case "*", "/":
+		case "*", "/", "%":
 			return 50
 		}
 	}
@@ -1100,7 +1101,7 @@ func evalInfix(left Expr, op string, right Expr, form Form) (any, error) {
 	}
 
 	switch op {
-	case "+", "-", "*", "/":
+	case "+", "-", "*", "/", "%":
 		lf, lok := toFloat(lv)
 		rf, rok := toFloat(rv)
 
@@ -1123,6 +1124,11 @@ func evalInfix(left Expr, op string, right Expr, form Form) (any, error) {
 				return nil, fmt.Errorf("division by zero")
 			}
 			return lf / rf, nil
+		case "%":
+			if rf == 0 {
+				return nil, fmt.Errorf("modulo by zero")
+			}
+			return math.Mod(lf, rf), nil
 		}
 	case ">", ">=", "<", "<=", "==", "!=":
 		// 1. Try numeric comparison first
@@ -1153,7 +1159,6 @@ func evalInfix(left Expr, op string, right Expr, form Form) (any, error) {
 			return ls == rs, nil
 		case "!=":
 			return ls != rs, nil
-		// --- FIX START: Add string comparison logic here ---
 		case ">":
 			return ls > rs, nil
 		case ">=":
@@ -1162,7 +1167,6 @@ func evalInfix(left Expr, op string, right Expr, form Form) (any, error) {
 			return ls < rs, nil
 		case "<=":
 			return ls <= rs, nil
-		// --- FIX END ---
 		default:
 			return false, nil
 		}
