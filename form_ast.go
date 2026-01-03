@@ -1120,6 +1120,7 @@ func evalInfix(left Expr, op string, right Expr, form Form) (any, error) {
 			return lf / rf, nil
 		}
 	case ">", ">=", "<", "<=", "==", "!=":
+		// 1. Try numeric comparison first
 		if lf, lok := toFloat(lv); lok {
 			if rf, rok := toFloat(rv); rok {
 				switch op {
@@ -1138,7 +1139,8 @@ func evalInfix(left Expr, op string, right Expr, form Form) (any, error) {
 				}
 			}
 		}
-		// Degenerate to string comparison
+
+		// 2. Fallback to String comparison
 		ls := fmt.Sprintf("%v", lv)
 		rs := fmt.Sprintf("%v", rv)
 		switch op {
@@ -1146,6 +1148,16 @@ func evalInfix(left Expr, op string, right Expr, form Form) (any, error) {
 			return ls == rs, nil
 		case "!=":
 			return ls != rs, nil
+		// --- FIX START: Add string comparison logic here ---
+		case ">":
+			return ls > rs, nil
+		case ">=":
+			return ls >= rs, nil
+		case "<":
+			return ls < rs, nil
+		case "<=":
+			return ls <= rs, nil
+		// --- FIX END ---
 		default:
 			return false, nil
 		}

@@ -1710,3 +1710,190 @@ func TestInfixExpr_UnknownOp(t *testing.T) {
 		t.Errorf("Expected unknown infix op error, got %v", err)
 	}
 }
+
+func TestEval_StringComparison(t *testing.T) {
+	// evalInfix falls back to string comparison if operands are not floats.
+	// We need to verify that "b" > "a" works.
+	tests := []struct {
+		expr string
+		want bool
+	}{
+		{`"b" > "a"`, true},
+		{`"a" > "b"`, false},
+		{`"a" < "b"`, true},
+		{`"a" >= "a"`, true},
+		{`"b" <= "a"`, false},
+		// Compare mixed types (converts to string)
+		{`"2" > 1`, true}, // "2" > "1" is true
+	}
+
+	for _, tt := range tests {
+		e, err := ParseExpr(tt.expr)
+		if err != nil {
+			t.Errorf("ParseExpr(%q) failed: %v", tt.expr, err)
+			continue
+		}
+		got, err := EvalBool(e, Form{})
+		if err != nil {
+			t.Errorf("EvalBool(%q) failed: %v", tt.expr, err)
+			continue
+		}
+		if got != tt.want {
+			t.Errorf("EvalBool(%q) = %v, want %v", tt.expr, got, tt.want)
+		}
+	}
+}
+
+func TestGetValueByKeyPath_SpecificTypedSlices(t *testing.T) {
+	// The implementation has specific switch cases for []string and []map[string]any.
+	// We must ensure these specific types (not just []any) are handled.
+
+	// 1. Test []string
+	formStringSlice := Form{
+		"tags": []string{"tagA", "tagB"},
+	}
+	v, ok := GetValueByKeyPath(formStringSlice, splitArrowPath("tags->1"))
+	if !ok || v != "tagB" {
+		t.Errorf("GetValueByKeyPath with []string failed, got %v, %v", v, ok)
+	}
+
+	// 2. Test []map[string]any
+	formMapSlice := Form{
+		"users": []map[string]any{
+			{"name": "alice"},
+			{"name": "bob"},
+		},
+	}
+	v2, ok2 := GetValueByKeyPath(formMapSlice, splitArrowPath("users->0->name"))
+	if !ok2 || v2 != "alice" {
+		t.Errorf("GetValueByKeyPath with []map[string]any failed, got %v, %v", v2, ok2)
+	}
+
+	// 3. Test Negative Index (should fail gracefully)
+	v3, ok3 := GetValueByKeyPath(formStringSlice, splitArrowPath("tags->-1"))
+	if ok3 {
+		t.Errorf("Expected negative index to return false, got value %v", v3)
+	}
+}
+
+func TestBoolLikeness(t *testing.T) {
+	// toBool supports "yes", "y", "1".
+	tests := []struct {
+		val  any
+		want bool
+	}{
+		{"yes", true},
+		{"YES", true},
+		{"y", true},
+		{"1", true},
+		{"no", false},
+		{"0", false},
+		{"random", false},
+	}
+
+	for _, tt := range tests {
+		if got := toBool(tt.val); got != tt.want {
+			t.Errorf("toBool(%v) = %v, want %v", tt.val, got, tt.want)
+		}
+	}
+}
+
+func TestIfNode_ErrorSwallowing(t *testing.T) {
+	// If an expression errors (e.g. division by zero), IfNode treats it as false (Else branch).
+	// It should NOT panic or return the error up the stack during Fields/KeyValue extraction.
+
+	// Expression: 1 / 0 (Division by zero error)
+	node := If("1 / 0", Field("IsTrue"), Field("IsFalse"))
+
+	// 1. Test Fields
+	// FIX: Provide a form containing "IsFalse" so FieldNode.Fields returns it.
+	form := Form{"IsFalse": "exists"}
+	fields := node.Fields(form)
+
+	if len(fields) != 1 || fields[0] != "IsFalse" {
+		t.Errorf("Fields() with error expr should select Else branch, got %v", fields)
+	}
+
+	// 2. Test KeyValue
+	form2 := Form{"IsTrue": "T", "IsFalse": "F"}
+	kv := node.KeyValue(form2)
+	if kv["IsFalse"] != "F" {
+		t.Errorf("KeyValue() with error expr should select Else branch, got %v", kv)
+	}
+}
+
+func TestChoice_MixedTypeFiltering(t *testing.T) {
+	// In Multiple mode, we iterate []any. If an element is NOT a string, it should be skipped.
+	choice := Choice("items", true,
+		Option("valid", Field("F_Valid")),
+	)
+
+	// Form has "valid" string, but also an int and a bool
+	form := Form{
+		"items":   []any{123, "valid", true},
+		"F_Valid": "found",
+	}
+
+	// FIX: Use .Fields(form) instead of .Selected(form)
+	sel := choice.Fields(form)
+
+	if len(sel) != 2 { // ["items", "F_Valid"]
+		t.Errorf("Expected 2 selected fields, got %v", sel)
+	}
+	if !sliceHasAll(sel, "items", "F_Valid") {
+		t.Errorf("Failed to filter mixed types in choice array. Got %v", sel)
+	}
+}
+func TestNilFormSafety(t *testing.T) {
+	// Verify that calling Fields(nil) works safely on all node types
+	nodes := []Node{
+		Field("f"),
+		Choice("c", false, Option("o", Field("sub"))),
+		Container("g", Field("child")),
+		If("true", Field("then"), Field("else")),
+	}
+
+	for i, n := range nodes {
+		f := n.Fields(nil)
+		if len(f) != 0 {
+			t.Errorf("Node %d: Expected empty fields for nil form, got %v", i, f)
+		}
+	}
+}
+
+func TestCallExpr_CollectPaths(t *testing.T) {
+	// Verify that function arguments are recursed for path collection
+	expr, err := ParseExpr(`myFunc([path]->[A], [path]->[B])`)
+	if err != nil {
+		t.Fatalf("Parse error: %v", err)
+	}
+	paths := expr.CollectPaths()
+	expected := []string{"[path]->[A]", "[path]->[B]"}
+
+	if len(paths) != 2 {
+		t.Errorf("CollectPaths failed, got %v", paths)
+	}
+	// Order isn't guaranteed by unique(), so check existence
+	pMap := make(map[string]bool)
+	for _, p := range paths {
+		pMap[p] = true
+	}
+	for _, e := range expected {
+		if !pMap[e] {
+			t.Errorf("Missing path %q", e)
+		}
+	}
+}
+
+func TestLexer_StartingDot(t *testing.T) {
+	// Code handles: case unicode.IsDigit(r) || (r == '.' && unicode.IsDigit(l.peek())):
+	// We need to test .5
+	e, err := ParseExpr(".5 + .5")
+	if err != nil {
+		t.Fatalf("Parse .5 failed: %v", err)
+	}
+	v, _ := e.Eval(Form{})
+	if f, _ := toFloat(v); f != 1.0 {
+		t.Errorf(".5 + .5 = %v, want 1.0", f)
+	}
+}
