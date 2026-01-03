@@ -2064,3 +2064,44 @@ func TestEval_BitwiseNot(t *testing.T) {
 		}
 	}
 }
+
+func TestEval_Ternary(t *testing.T) {
+	tests := []struct {
+		expr string
+		want any
+	}{
+		{"true ? 10 : 20", 10.0},
+		{"false ? 10 : 20", 20.0},
+
+		// (1==1) ? "yes" : "no"
+		{"1==1 ? \"yes\" : \"no\"", "yes"},
+
+		// true ? 1+1 : 0  => 2
+		{"true ? 1+1 : 0", 2.0},
+
+		// true ? 1 : true ? 2 : 3  =>  true ? 1 : (true ? 2 : 3) => 1
+		{"true ? 1 : true ? 2 : 3", 1.0},
+		// false ? 1 : true ? 2 : 3 =>  false ? 1 : (true ? 2 : 3) => 2
+		{"false ? 1 : true ? 2 : 3", 2.0},
+
+		{"true ? 100 : 1/0", 100.0},
+		{"false ? 1/0 : 200", 200.0},
+	}
+
+	for _, tt := range tests {
+		e, err := ParseExpr(tt.expr)
+		if err != nil {
+			t.Errorf("ParseExpr(%q) failed: %v", tt.expr, err)
+			continue
+		}
+		got, err := e.Eval(Form{})
+		if err != nil {
+			t.Errorf("Eval(%q) failed: %v", tt.expr, err)
+			continue
+		}
+
+		if fmt.Sprintf("%v", got) != fmt.Sprintf("%v", tt.want) {
+			t.Errorf("Eval(%q) = %v, want %v", tt.expr, got, tt.want)
+		}
+	}
+}

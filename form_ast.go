@@ -658,12 +658,14 @@ const (
 	tNumber
 	tString
 	tIdent
-	tPathKey // [name]
-	tLParen  // (
-	tRParen  // )
-	tComma   // ,
-	tOp      // + - * / > < >= <= == != && || !
-	tArrow   // ->
+	tPathKey  // [name]
+	tLParen   // (
+	tRParen   // )
+	tComma    // ,
+	tOp       // + - * / > < >= <= == != && || !
+	tArrow    // ->
+	tQuestion // ?
+	tColon    // :
 )
 
 type token struct {
@@ -787,6 +789,10 @@ func (l *lexer) nextToken() (token, error) {
 		return token{tComma, ","}, nil
 	case r == '~':
 		return token{tOp, "~"}, nil
+	case r == '?':
+		return token{tQuestion, "?"}, nil
+	case r == ':':
+		return token{tColon, ":"}, nil
 	case r == '^':
 		return token{tOp, "^"}, nil
 	case r == '-':
@@ -854,6 +860,8 @@ func lbp(t token) int {
 	switch t.typ {
 	case tArrow:
 		return 80 // The priority of path connection is the highest
+	case tQuestion: // ?
+		return 5
 	case tOp:
 		switch t.val {
 		case "||":
@@ -881,7 +889,7 @@ func (p *parser) parseExpr(rbp int) (Expr, error) {
 	}
 	for {
 		curTok := p.cur()
-		if curTok.typ != tOp && curTok.typ != tArrow {
+		if curTok.typ != tOp && curTok.typ != tArrow && curTok.typ != tQuestion {
 			break
 		}
 		if lbp(curTok) <= rbp {
@@ -981,6 +989,27 @@ func (p *parser) nud(t token) (Expr, error) {
 
 func (p *parser) led(t token, left Expr) (Expr, error) {
 	switch t.typ {
+	case tQuestion: // ?
+		trueExpr, err := p.parseExpr(0)
+		if err != nil {
+			return nil, err
+		}
+
+		//  :
+		if err := p.expect(tColon, ":"); err != nil {
+			return nil, err
+		}
+
+		falseExpr, err := p.parseExpr(4)
+		if err != nil {
+			return nil, err
+		}
+
+		return &TernaryExpr{
+			Cond:  left,
+			True:  trueExpr,
+			False: falseExpr,
+		}, nil
 	case tArrow:
 		seg, err := p.parsePathSegment()
 		if err != nil {
@@ -1281,4 +1310,29 @@ func init() {
 		}
 		return f, nil
 	})
+}
+
+type TernaryExpr struct {
+	Cond  Expr
+	True  Expr
+	False Expr
+}
+
+func (e *TernaryExpr) Eval(form Form) (any, error) {
+	condVal, err := EvalBool(e.Cond, form)
+	if err != nil {
+		return nil, err
+	}
+	if condVal {
+		return e.True.Eval(form)
+	}
+	return e.False.Eval(form)
+}
+
+func (e *TernaryExpr) CollectPaths() []string {
+	return unique(append(append(e.Cond.CollectPaths(), e.True.CollectPaths()...), e.False.CollectPaths()...))
+}
+
+func (e *TernaryExpr) String() string {
+	return fmt.Sprintf("(%s ? %s : %s)", e.Cond.String(), e.True.String(), e.False.String())
 }
