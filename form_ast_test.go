@@ -2105,3 +2105,26 @@ func TestEval_Ternary(t *testing.T) {
 		}
 	}
 }
+
+func TestEval_Parentheses(t *testing.T) {
+	tests := []struct {
+		expr string
+		want float64
+	}{
+		{"2 * 3 + 4", 10},
+		{"2 * (3 + 4)", 14},
+		{"(2 + 3) * (4 + 5)", 45},
+		{"10 / (2 + 3) * 2", 4}, // 10 / 5 * 2 = 2 * 2 = 4
+	}
+
+	for _, tt := range tests {
+		e, err := ParseExpr(tt.expr)
+		if err != nil {
+			t.Fatalf("Parse error: %v", err)
+		}
+		got, _ := e.Eval(Form{})
+		if f, _ := toFloat(got); f != tt.want {
+			t.Errorf("Eval(%q) = %v, want %v", tt.expr, f, tt.want)
+		}
+	}
+}
