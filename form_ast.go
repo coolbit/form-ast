@@ -1103,9 +1103,14 @@ func evalInfix(left Expr, op string, right Expr, form Form) (any, error) {
 	case "+", "-", "*", "/":
 		lf, lok := toFloat(lv)
 		rf, rok := toFloat(rv)
+
+		if op == "+" && (!lok || !rok) {
+			return fmt.Sprintf("%v%v", lv, rv), nil
+		}
 		if !(lok && rok) {
 			return float64(0), nil
 		}
+
 		switch op {
 		case "+":
 			return lf + rf, nil

@@ -1595,7 +1595,7 @@ func TestEval_TypeCoercion(t *testing.T) {
 		// String + Number
 		// "foo" fails to parse, so toFloat returns false.
 		// evalInfix sees !lok and returns 0 immediately (aborts operation).
-		{`"foo" + 5`, 0.0},
+		{`"foo" + 5`, "foo5"},
 
 		// "10" parses successfully as 10.0, so 10 + 5 = 15
 		{`"10" + 5`, 15.0},
@@ -1895,5 +1895,51 @@ func TestLexer_StartingDot(t *testing.T) {
 	v, _ := e.Eval(Form{})
 	if f, _ := toFloat(v); f != 1.0 {
 		t.Errorf(".5 + .5 = %v, want 1.0", f)
+	}
+}
+
+func TestEval_StringConcatenation(t *testing.T) {
+	tests := []struct {
+		expr string
+		want string
+	}{
+		{`"Hello" + " " + "World"`, "Hello World"},
+
+		{`"User id: " + 42`, "User id: 42"},
+
+		{`100 + " is the score"`, "100 is the score"},
+
+		{`"Level " + 2.5`, "Level 2.5"},
+
+		{`"Is active? " + true`, "Is active? true"},
+
+		{`"Total: " + (10 + 5)`, "Total: 15"},
+
+		// "Res: " + 10 -> "Res: 10"
+		// "Res: 10" + 5 -> "Res: 105"
+		{`"Res: " + 10 + 5`, "Res: 105"},
+	}
+
+	for _, tt := range tests {
+		e, err := ParseExpr(tt.expr)
+		if err != nil {
+			t.Errorf("ParseExpr(%q) failed: %v", tt.expr, err)
+			continue
+		}
+		got, err := e.Eval(Form{})
+		if err != nil {
+			t.Errorf("Eval(%q) failed: %v", tt.expr, err)
+			continue
+		}
+
+		s, ok := got.(string)
+		if !ok {
+			t.Errorf("Eval(%q) returned type %T, want string", tt.expr, got)
+			continue
+		}
+
+		if s != tt.want {
+			t.Errorf("Eval(%q) = %q, want %q", tt.expr, s, tt.want)
+		}
 	}
 }
