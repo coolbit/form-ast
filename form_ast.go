@@ -785,6 +785,8 @@ func (l *lexer) nextToken() (token, error) {
 		return token{tRParen, ")"}, nil
 	case r == ',':
 		return token{tComma, ","}, nil
+	case r == '~':
+		return token{tOp, "~"}, nil
 	case r == '^':
 		return token{tOp, "^"}, nil
 	case r == '-':
@@ -956,6 +958,12 @@ func (p *parser) nud(t token) (Expr, error) {
 				return nil, err
 			}
 			return &PrefixExpr{Op: "u-", Right: right}, nil
+		case "~":
+			right, err := p.parseExpr(60)
+			if err != nil {
+				return nil, err
+			}
+			return &PrefixExpr{Op: "~", Right: right}, nil
 		}
 
 	case tLParen:
@@ -1100,6 +1108,12 @@ func evalPrefix(op string, right Expr, form Form) (any, error) {
 			return -f, nil
 		}
 		return float64(0), nil
+	case "~":
+		f, ok := toFloat(rv)
+		if !ok {
+			return float64(0), nil
+		}
+		return float64(^int64(f)), nil
 	}
 	return nil, fmt.Errorf("unknown prefix op: %s", op)
 }
