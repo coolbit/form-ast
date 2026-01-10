@@ -2128,3 +2128,32 @@ func TestEval_Parentheses(t *testing.T) {
 		}
 	}
 }
+
+func TestExtremeTypeCoercion(t *testing.T) {
+	form := Form{
+		"bytes": []byte("123.45"),
+		"big":   int64(1<<62 + 1),
+	}
+
+	e, _ := ParseExpr(`[bytes] + 1`)
+	val, _ := e.Eval(form)
+	if f, ok := toFloat(val); ok {
+		fmt.Printf("Parsed bytes as float: %v\n", f)
+	}
+
+	e2, _ := ParseExpr(`1 << 64`)
+	_, _ = e2.Eval(form)
+}
+
+func TestDuplicateFieldHandling(t *testing.T) {
+	root := Container("root",
+		If("true", Field("conflict"), nil),
+		If("false", nil, Field("conflict")),
+	)
+	form := Form{"conflict": "val"}
+	ast, _ := NewAST(root)
+	kv := ast.KeyValue(form)
+	if len(kv) != 1 {
+		t.Errorf("Expected 1 key, got %v", kv)
+	}
+}
